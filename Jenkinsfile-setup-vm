@@ -1,29 +1,74 @@
 pipeline {
     agent {
-        label 'Jenkins-Testes-agent'
+        label 'local-agent'
     }
     
     environment {
-        VM_HOST = '192.168.1.100'  // IP da VM
-        VM_USER = 'jenkins'        // Usuário SSH
-        SSH_KEY_PATH = '/var/lib/jenkins/.ssh/id_rsa'
-        
         // Configurações de instalação
-        NODE_VERSION = '18.x'
+        NODE_VERSION = '21.x'
         DOCKER_VERSION = 'latest'
         POSTGRES_VERSION = '15'
         REDIS_VERSION = '7'
+        MONGODB_VERSION = '7'
+        TRAEFIK_VERSION = 'latest'
+        PORTAINER_VERSION = 'latest'
+        PGADMIN_VERSION = 'latest'
         
         // Configurações de containers
         POSTGRES_CONTAINER = 'postgres-app'
-        REDIS_CONTAINER = 'redis-app'
+        REDIS_CONTAINER_1 = 'redis-app-6379'
+        REDIS_CONTAINER_2 = 'redis-app-6380'
+        MONGODB_CONTAINER = 'mongodb-app'
+        TRAEFIK_CONTAINER = 'traefik'
+        PORTAINER_CONTAINER = 'portainer'
+        PGADMIN_CONTAINER = 'pgadmin'
+        
+        // Portas
         POSTGRES_PORT = '5432'
-        REDIS_PORT = '6379'
-        POSTGRES_PASSWORD = 'postgres123'
+        REDIS_PORT_1 = '6379'
+        REDIS_PORT_2 = '6380'
+        MONGODB_PORT = '27017'
+        TRAEFIK_PORT = '80'
+        TRAEFIK_PORT_SSL = '443'
+        PORTAINER_PORT = '9000'
+        PGADMIN_PORT = '5050'
+        
+        // Banco de dados
         POSTGRES_DB = 'appdb'
+        MONGODB_DB = 'appdb'
+        
+        // Domínios
+        TRAEFIK_DOMAIN = 'traefik.testes.possoatender.com'
+        PORTAINER_DOMAIN = 'portainer.testes.possoatender.com'
+        PGADMIN_DOMAIN = 'pgadmin.testes.possoatender.com'
+        
+        // Docker Network
+        DOCKER_NETWORK = 'traefik_network'
     }
     
     stages {
+        stage('Configurar Credenciais') {
+            steps {
+                script {
+                    // Configurações de conexão SSH (devem ser configuradas no Jenkins)
+                    env.VM_HOST = env.VM_HOST ?: '135.181.24.29'
+                    env.VM_USER = env.VM_USER ?: 'jenkins'
+                    env.SSH_KEY_PATH = env.SSH_KEY_PATH ?: '/var/lib/jenkins/.ssh/id_rsa'
+                    
+                    // Credenciais de banco de dados (devem ser configuradas no Jenkins)
+                    env.POSTGRES_PASSWORD = env.POSTGRES_PASSWORD ?: 'postgres123'
+                    env.MONGODB_PASSWORD = env.MONGODB_PASSWORD ?: 'mongo123'
+                    env.PGADMIN_EMAIL = env.PGADMIN_EMAIL ?: 'admin@admin.com'
+                    env.PGADMIN_PASSWORD = env.PGADMIN_PASSWORD ?: 'admin123'
+                    env.PORTAINER_PASSWORD = env.PORTAINER_PASSWORD ?: 'my_password'
+                    
+                    echo '🔐 Credenciais configuradas via variáveis de ambiente'
+                    echo "🖥️  VM: ${env.VM_HOST}"
+                    echo "👤 Usuário: ${env.VM_USER}"
+                }
+            }
+        }
+        
         stage('Verificar Conectividade') {
             steps {
                 script {
@@ -86,7 +131,6 @@ pipeline {
         stage('Instalar Node.js') {
             when {
                 expression {
-                    // Só executa se Node.js não estiver instalado
                     return true // Sempre executa para garantir versão correta
                 }
             }
@@ -160,51 +204,166 @@ pipeline {
             }
         }
         
-        stage('Configurar Containers de Banco') {
+        stage('Configurar Infraestrutura Docker') {
             steps {
                 script {
-                    echo '🗄️ Configurando containers de banco de dados...'
+                    echo '🏗️ Configurando infraestrutura Docker completa...'
                     sh '''
                         ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
                             # Para containers existentes
-                            docker stop ${POSTGRES_CONTAINER} ${REDIS_CONTAINER} || true
-                            docker rm ${POSTGRES_CONTAINER} ${REDIS_CONTAINER} || true
+                            docker stop ${TRAEFIK_CONTAINER} ${PORTAINER_CONTAINER} ${POSTGRES_CONTAINER} ${REDIS_CONTAINER_1} ${REDIS_CONTAINER_2} ${MONGODB_CONTAINER} ${PGADMIN_CONTAINER} || true
+                            docker rm ${TRAEFIK_CONTAINER} ${PORTAINER_CONTAINER} ${POSTGRES_CONTAINER} ${REDIS_CONTAINER_1} ${REDIS_CONTAINER_2} ${MONGODB_CONTAINER} ${PGADMIN_CONTAINER} || true
                             
                             # Cria rede para containers
-                            docker network create app-network || true
+                            docker network create ${DOCKER_NETWORK} || true
+                            
+                            # Cria diretórios para volumes
+                            sudo mkdir -p /opt/docker/volumes/postgres
+                            sudo mkdir -p /opt/docker/volumes/redis-6380
+                            sudo mkdir -p /opt/docker/volumes/mongodb
+                            sudo mkdir -p /opt/docker/volumes/traefik
+                            sudo mkdir -p /opt/docker/volumes/portainer
+                            sudo mkdir -p /opt/docker/volumes/pgadmin
+                            
+                            # Configura permissões
+                            sudo chown -R 1000:1000 /opt/docker/volumes/
+                            
+                            # Executa Traefik (Load Balancer/Reverse Proxy)
+                            docker run -d \\
+                                --name ${TRAEFIK_CONTAINER} \\
+                                --network ${DOCKER_NETWORK} \\
+                                -p ${TRAEFIK_PORT}:80 \\
+                                -p ${TRAEFIK_PORT_SSL}:443 \\
+                                -v /var/run/docker.sock:/var/run/docker.sock:ro \\
+                                -v /opt/docker/volumes/traefik:/etc/traefik \\
+                                -l traefik.enable=true \\
+                                -l traefik.http.routers.traefik.rule="Host(\`${TRAEFIK_DOMAIN}\`)" \\
+                                -l traefik.http.routers.traefik.entrypoints=web \\
+                                -l traefik.http.services.traefik.loadbalancer.server.port=8080 \\
+                                traefik:${TRAEFIK_VERSION} \\
+                                --api.dashboard=true \\
+                                --api.insecure=true \\
+                                --providers.docker=true \\
+                                --providers.docker.exposedbydefault=false \\
+                                --entrypoints.web.address=:80 \\
+                                --entrypoints.websecure.address=:443
                             
                             # Executa PostgreSQL
                             docker run -d \\
                                 --name ${POSTGRES_CONTAINER} \\
-                                --network app-network \\
+                                --network ${DOCKER_NETWORK} \\
                                 -e POSTGRES_PASSWORD=${POSTGRES_PASSWORD} \\
                                 -e POSTGRES_DB=${POSTGRES_DB} \\
                                 -p ${POSTGRES_PORT}:5432 \\
-                                -v postgres_data:/var/lib/postgresql/data \\
+                                -v /opt/docker/volumes/postgres:/var/lib/postgresql/data \\
                                 postgres:${POSTGRES_VERSION}
                             
-                            # Executa Redis
+                            # Executa Redis 1 (porta 6379) - SEM persistência (cache temporário)
                             docker run -d \\
-                                --name ${REDIS_CONTAINER} \\
-                                --network app-network \\
-                                -p ${REDIS_PORT}:6379 \\
-                                -v redis_data:/data \\
-                                redis:${REDIS_VERSION}
+                                --name ${REDIS_CONTAINER_1} \\
+                                --network ${DOCKER_NETWORK} \\
+                                -p ${REDIS_PORT_1}:6379 \\
+                                redis:${REDIS_VERSION} \\
+                                redis-server --save "" --appendonly no
+                            
+                            # Executa Redis 2 (porta 6380) - COM persistência
+                            docker run -d \\
+                                --name ${REDIS_CONTAINER_2} \\
+                                --network ${DOCKER_NETWORK} \\
+                                -p ${REDIS_PORT_2}:6379 \\
+                                -v /opt/docker/volumes/redis-6380:/data \\
+                                redis:${REDIS_VERSION} \\
+                                redis-server --appendonly yes
+                            
+                            # Executa MongoDB
+                            docker run -d \\
+                                --name ${MONGODB_CONTAINER} \\
+                                --network ${DOCKER_NETWORK} \\
+                                -e MONGO_INITDB_ROOT_USERNAME=admin \\
+                                -e MONGO_INITDB_ROOT_PASSWORD=${MONGODB_PASSWORD} \\
+                                -e MONGO_INITDB_DATABASE=${MONGODB_DB} \\
+                                -p ${MONGODB_PORT}:27017 \\
+                                -v /opt/docker/volumes/mongodb:/data/db \\
+                                mongo:${MONGODB_VERSION}
+                            
+                            # Executa Portainer
+                            docker run -d \\
+                                --name ${PORTAINER_CONTAINER} \\
+                                --network ${DOCKER_NETWORK} \\
+                                -p ${PORTAINER_PORT}:9000 \\
+                                -v /var/run/docker.sock:/var/run/docker.sock:ro \\
+                                -v /opt/docker/volumes/portainer:/data \\
+                                -l traefik.enable=true \\
+                                -l traefik.http.routers.portainer.rule="Host(\`${PORTAINER_DOMAIN}\`)" \\
+                                -l traefik.http.routers.portainer.entrypoints=web \\
+                                -l traefik.http.services.portainer.loadbalancer.server.port=9000 \\
+                                portainer/portainer-ce:${PORTAINER_VERSION}
+                            
+                            # Executa pgAdmin
+                            docker run -d \\
+                                --name ${PGADMIN_CONTAINER} \\
+                                --network ${DOCKER_NETWORK} \\
+                                -e PGADMIN_DEFAULT_EMAIL=${PGADMIN_EMAIL} \\
+                                -e PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD} \\
+                                -p ${PGADMIN_PORT}:80 \\
+                                -v /opt/docker/volumes/pgadmin:/var/lib/pgadmin \\
+                                -l traefik.enable=true \\
+                                -l traefik.http.routers.pgadmin.rule="Host(\`${PGADMIN_DOMAIN}\`)" \\
+                                -l traefik.http.routers.pgadmin.entrypoints=web \\
+                                -l traefik.http.services.pgadmin.loadbalancer.server.port=80 \\
+                                dpage/pgadmin4:${PGADMIN_VERSION}
                             
                             # Aguarda inicialização
-                            sleep 10
+                            sleep 15
                             
                             # Verifica se containers estão rodando
                             echo "📊 Status dos containers:"
                             docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
                             
-                            # Testa conexão com PostgreSQL
+                            # Testa conexões
                             echo "🔍 Testando PostgreSQL..."
                             docker exec ${POSTGRES_CONTAINER} pg_isready -U postgres && echo "✅ PostgreSQL OK" || echo "❌ PostgreSQL falhou"
                             
-                            # Testa conexão com Redis
-                            echo "🔍 Testando Redis..."
-                            docker exec ${REDIS_CONTAINER} redis-cli ping && echo "✅ Redis OK" || echo "❌ Redis falhou"
+                            echo "🔍 Testando Redis 1 (6379)..."
+                            docker exec ${REDIS_CONTAINER_1} redis-cli ping && echo "✅ Redis 1 OK" || echo "❌ Redis 1 falhou"
+                            
+                            echo "🔍 Testando Redis 2 (6380)..."
+                            docker exec ${REDIS_CONTAINER_2} redis-cli ping && echo "✅ Redis 2 OK" || echo "❌ Redis 2 falhou"
+                            
+                            echo "🔍 Testando MongoDB..."
+                            docker exec ${MONGODB_CONTAINER} mongosh --eval "db.adminCommand('ping')" && echo "✅ MongoDB OK" || echo "❌ MongoDB falhou"
+                        '''
+                    '''
+                }
+            }
+        }
+        
+        stage('Configurar Usuários e Senhas') {
+            steps {
+                script {
+                    echo '🔐 Configurando usuários e senhas...'
+                    sh '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                            echo "🔐 Configurando Portainer..."
+                            # Aguarda Portainer inicializar completamente
+                            sleep 30
+                            
+                            # Cria arquivo de configuração para Portainer
+                            cat > /tmp/portainer-setup.json << EOF
+                            {
+                                "Username": "admin",
+                                "Password": "${PORTAINER_PASSWORD}"
+                            }
+                            EOF
+                            
+                            echo "✅ Configurações de usuário criadas"
+                            echo "📋 Resumo das credenciais:"
+                            echo "   🐳 Portainer: admin / ${PORTAINER_PASSWORD}"
+                            echo "   🗄️  pgAdmin: ${PGADMIN_EMAIL} / ${PGADMIN_PASSWORD}"
+                            echo "   🗄️  PostgreSQL: postgres / ${POSTGRES_PASSWORD}"
+                            echo "   🔴 Redis 6379: sem autenticação (cache temporário, sem persistência)"
+                            echo "   🔴 Redis 6380: sem autenticação (com persistência)"
+                            echo "   🍃 MongoDB: admin / ${MONGODB_PASSWORD}"
                         '''
                     '''
                 }
@@ -231,7 +390,9 @@ pipeline {
                                 git \\
                                 vim \\
                                 net-tools \\
-                                nginx
+                                nginx \\
+                                certbot \\
+                                python3-certbot-nginx
                             
                             # Instala ferramentas de monitoramento
                             sudo npm install -g \\
@@ -268,6 +429,8 @@ pipeline {
                             sudo ufw allow 443/tcp  # HTTPS
                             sudo ufw allow 3000/tcp # Node.js app
                             sudo ufw allow 8080/tcp # Jenkins
+                            sudo ufw allow 9000/tcp # Portainer
+                            sudo ufw allow 5050/tcp # pgAdmin
                             
                             # Habilita firewall
                             sudo ufw --force enable
@@ -298,16 +461,31 @@ pipeline {
                             echo "🔍 Teste 4: PostgreSQL Container"
                             docker exec ${POSTGRES_CONTAINER} pg_isready -U postgres && echo "✅ PostgreSQL OK" || echo "❌ PostgreSQL falhou"
                             
-                            echo "🔍 Teste 5: Redis Container"
-                            docker exec ${REDIS_CONTAINER} redis-cli ping && echo "✅ Redis OK" || echo "❌ Redis falhou"
+                            echo "🔍 Teste 5: Redis Container 1 (6379)"
+                            docker exec ${REDIS_CONTAINER_1} redis-cli ping && echo "✅ Redis 1 OK" || echo "❌ Redis 1 falhou"
                             
-                            echo "🔍 Teste 6: PM2"
+                            echo "🔍 Teste 6: Redis Container 2 (6380)"
+                            docker exec ${REDIS_CONTAINER_2} redis-cli ping && echo "✅ Redis 2 OK" || echo "❌ Redis 2 falhou"
+                            
+                            echo "🔍 Teste 7: MongoDB Container"
+                            docker exec ${MONGODB_CONTAINER} mongosh --eval "db.adminCommand('ping')" && echo "✅ MongoDB OK" || echo "❌ MongoDB falhou"
+                            
+                            echo "🔍 Teste 8: Traefik Container"
+                            docker exec ${TRAEFIK_CONTAINER} traefik version && echo "✅ Traefik OK" || echo "❌ Traefik falhou"
+                            
+                            echo "🔍 Teste 9: Portainer Container"
+                            docker ps | grep ${PORTAINER_CONTAINER} && echo "✅ Portainer OK" || echo "❌ Portainer falhou"
+                            
+                            echo "🔍 Teste 10: pgAdmin Container"
+                            docker ps | grep ${PGADMIN_CONTAINER} && echo "✅ pgAdmin OK" || echo "❌ pgAdmin falhou"
+                            
+                            echo "🔍 Teste 11: PM2"
                             pm2 --version && echo "✅ PM2 OK" || echo "❌ PM2 falhou"
                             
-                            echo "🔍 Teste 7: Git"
+                            echo "🔍 Teste 12: Git"
                             git --version && echo "✅ Git OK" || echo "❌ Git falhou"
                             
-                            echo "🔍 Teste 8: Nginx"
+                            echo "🔍 Teste 13: Nginx"
                             nginx -v && echo "✅ Nginx OK" || echo "❌ Nginx falhou"
                         '''
                     '''
@@ -326,7 +504,11 @@ pipeline {
                 echo "   📦 Node.js: ${NODE_VERSION}"
                 echo "   🐳 Docker: ${DOCKER_VERSION}"
                 echo "   🗄️  PostgreSQL: ${POSTGRES_VERSION}"
-                echo "   🔴 Redis: ${REDIS_VERSION}"
+                echo "   🔴 Redis: ${REDIS_VERSION} (2 instâncias)"
+                echo "   🍃 MongoDB: ${MONGODB_VERSION}"
+                echo "   🌐 Traefik: ${TRAEFIK_VERSION}"
+                echo "   🐳 Portainer: ${PORTAINER_VERSION}"
+                echo "   📊 pgAdmin: ${PGADMIN_VERSION}"
             }
         }
         success {
@@ -335,14 +517,27 @@ pipeline {
                 sh '''
                     ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
                         echo "=========================================="
-                        echo "🎯 AMBIENTE CONFIGURADO COM SUCESSO"
+                        echo "🎯 INFRAESTRUTURA CONFIGURADA COM SUCESSO"
                         echo "🖥️  VM: ${VM_HOST}"
                         echo "📦 Node.js: $(node --version)"
                         echo "🐳 Docker: $(docker --version)"
+                        echo "🌐 Traefik: https://${TRAEFIK_DOMAIN}"
+                        echo "🐳 Portainer: https://${PORTAINER_DOMAIN}"
+                        echo "📊 pgAdmin: https://${PGADMIN_DOMAIN}"
                         echo "🗄️  PostgreSQL: Rodando na porta ${POSTGRES_PORT}"
-                        echo "🔴 Redis: Rodando na porta ${REDIS_PORT}"
+                        echo "🔴 Redis 1: Rodando na porta ${REDIS_PORT_1} (cache temporário)"
+                        echo "🔴 Redis 2: Rodando na porta ${REDIS_PORT_2} (com persistência)"
+                        echo "🍃 MongoDB: Rodando na porta ${MONGODB_PORT}"
+                        echo "📊 pgAdmin: Rodando na porta ${PGADMIN_PORT}"
                         echo "🛠️  Ferramentas: PM2, Git, Nginx, etc."
                         echo "🔥 Firewall: Configurado e ativo"
+                        echo "🌐 Docker Network: ${DOCKER_NETWORK}"
+                        echo ""
+                        echo "🔐 CREDENCIAIS:"
+                        echo "   Portainer: admin / ${PORTAINER_PASSWORD}"
+                        echo "   pgAdmin: ${PGADMIN_EMAIL} / ${PGADMIN_PASSWORD}"
+                        echo "   PostgreSQL: postgres / ${POSTGRES_PASSWORD}"
+                        echo "   MongoDB: admin / ${MONGODB_PASSWORD}"
                         echo "=========================================="
                     '''
                 '''
@@ -362,6 +557,8 @@ pipeline {
                         echo "💾 Memória: $(free -h)"
                         echo "💿 Disco: $(df -h)"
                         echo "🌐 Rede: $(ip addr show)"
+                        echo "🐳 Containers:"
+                        docker ps -a
                         echo "=========================================="
                     '''
                 '''

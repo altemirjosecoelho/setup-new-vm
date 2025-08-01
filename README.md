@@ -1,249 +1,149 @@
-# 🖥️ Setup de VMs via Jenkins
+# Setup de Infraestrutura com Jenkins
 
-Este projeto inclui pipelines e scripts para automatizar a configuração de VMs (Máquinas Virtuais) através do Jenkins, instalando e configurando todas as dependências necessárias para desenvolvimento e produção.
+Este projeto automatiza a configuração de uma infraestrutura completa usando Jenkins Pipeline, incluindo Traefik, Portainer, PostgreSQL, MongoDB, Redis e pgAdmin.
 
-## 🎯 **Quando Usar Jenkins para Setup de VMs**
+## 🏗️ Infraestrutura Configurada
 
-### ✅ **Cenários Ideais:**
-- **Ambientes de desenvolvimento** padronizados
-- **Servidores de teste/staging** 
-- **Deploy de aplicações** que precisam de dependências específicas
-- **Ambientes temporários** para testes
-- **Infraestrutura como código** (IaC)
+### Containers Docker:
+- **Traefik**: Load balancer/reverse proxy
+- **Portainer**: Interface web para gerenciar Docker
+- **PostgreSQL**: Banco de dados relacional
+- **MongoDB**: Banco NoSQL
+- **Redis 1**: Cache temporário (porta 6379, sem persistência)
+- **Redis 2**: Cache persistente (porta 6380, com persistência)
+- **pgAdmin**: Interface web para PostgreSQL
 
-### ⚠️ **Cenários que Requerem Cuidado:**
-- **Produção crítica** (melhor usar ferramentas especializadas como Ansible, Terraform)
-- **VMs com dados sensíveis**
-- **Ambientes muito complexos**
+### Domínios Configurados:
+- **Traefik**: `https://traefik.testes.possoatender.com`
+- **Portainer**: `https://portainer.testes.possoatender.com`
+- **pgAdmin**: `https://pgadmin.testes.possoatender.com`
 
-## 📁 **Arquivos do Projeto**
+## 🔐 Configuração Segura de Credenciais
 
-### **Pipelines:**
-- `Jenkinsfile-setup-vm` - Pipeline principal para setup de VMs
-- `Jenkinsfile` - Pipeline original do projeto
+### ⚠️ IMPORTANTE: Segurança
+**NUNCA** commite credenciais reais no repositório Git. Use sempre variáveis de ambiente ou o sistema de Credentials do Jenkins.
 
-### **Scripts:**
-- `scripts/setup-ssh-keys.sh` - Configuração de chaves SSH
+### Método 1: Variáveis de Ambiente no Jenkins
 
-## 🚀 **Como Usar**
+1. Acesse o Jenkins > **Gerenciar Jenkins** > **Configurar o Sistema**
+2. Na seção **"Variáveis de ambiente globais"**, adicione:
 
-### **1. Configuração Inicial**
-
-#### **A. Configurar Chaves SSH:**
 ```bash
-# Execute como root ou com sudo
-sudo ./scripts/setup-ssh-keys.sh [VM_IP] [VM_USER] [JENKINS_USER]
+# Configurações de Conexão SSH
+VM_HOST=192.168.1.100
+VM_USER=jenkins
+SSH_KEY_PATH=/var/lib/jenkins/.ssh/id_rsa
 
-# Exemplo:
-sudo ./scripts/setup-ssh-keys.sh 192.168.1.100 jenkins jenkins
+# Credenciais de Banco de Dados
+POSTGRES_PASSWORD=sua_senha_postgres_aqui
+MONGODB_PASSWORD=sua_senha_mongodb_aqui
+PGADMIN_EMAIL=admin@seudominio.com
+PGADMIN_PASSWORD=sua_senha_pgadmin_aqui
+PORTAINER_PASSWORD=sua_senha_portainer_aqui
+
+# Domínios (opcional)
+TRAEFIK_DOMAIN=traefik.seudominio.com
+PORTAINER_DOMAIN=portainer.seudominio.com
+PGADMIN_DOMAIN=pgadmin.seudominio.com
 ```
 
-#### **B. Configurar Pipeline no Jenkins:**
-1. Acesse o Jenkins: `https://jenkins.controller.possoatender.com/`
-2. Crie um novo pipeline job
-3. Configure para usar o arquivo `Jenkinsfile-setup-vm`
-4. Configure as variáveis de ambiente conforme necessário
+### Método 2: Sistema de Credentials do Jenkins (Recomendado)
 
-### **2. Variáveis de Ambiente**
+1. Acesse o Jenkins > **Gerenciar Jenkins** > **Gerenciar Credentials**
+2. Adicione as credenciais como **Secret text** ou **Username with password**
+3. Use os IDs das credenciais no pipeline
 
-Edite as variáveis no pipeline conforme sua necessidade:
-
+Exemplo de uso no pipeline:
 ```groovy
-environment {
-    VM_HOST = '192.168.1.100'  // IP da sua VM
-    VM_USER = 'jenkins'        // Usuário SSH na VM
-    SSH_KEY_PATH = '/var/lib/jenkins/.ssh/id_rsa'
-    
-    // Versões das ferramentas
-    NODE_VERSION = '18.x'
-    DOCKER_VERSION = 'latest'
-    POSTGRES_VERSION = '15'
-    REDIS_VERSION = '7'
-    
-    // Configurações de containers
-    POSTGRES_CONTAINER = 'postgres-app'
-    REDIS_CONTAINER = 'redis-app'
-    POSTGRES_PORT = '5432'
-    REDIS_PORT = '6379'
-    POSTGRES_PASSWORD = 'postgres123'
-    POSTGRES_DB = 'appdb'
+withCredentials([
+    string(credentialsId: 'postgres-password', variable: 'POSTGRES_PASSWORD'),
+    string(credentialsId: 'mongodb-password', variable: 'MONGODB_PASSWORD'),
+    string(credentialsId: 'portainer-password', variable: 'PORTAINER_PASSWORD')
+]) {
+    // Seu código aqui
 }
 ```
 
-### **3. Executar o Pipeline**
+## 🚀 Como Executar
 
-1. **No Jenkins:**
-   - Acesse o job criado
-   - Clique em "Build Now"
-   - Acompanhe os logs em tempo real
+### Pré-requisitos:
+1. Jenkins configurado com agente `Jenkins-Testes-agent`
+2. Chave SSH configurada para acesso à VM
+3. Variáveis de ambiente configuradas (ver seção acima)
 
-2. **Via Git (se configurado):**
-   - Faça push para a branch configurada
-   - O Jenkins executará automaticamente
+### Execução:
+1. Clone este repositório
+2. Configure as credenciais no Jenkins
+3. Execute o pipeline `Jenkinsfile-setup-vm`
 
-## 📋 **O que o Pipeline Instala/Configura**
+## 📋 Credenciais Padrão (após instalação)
 
-### **🔧 Ferramentas Principais:**
-- **Node.js** (versão configurável)
-- **NPM** (gerenciador de pacotes)
-- **Docker** (containerização)
-- **Docker Compose** (orquestração)
-- **Git** (controle de versão)
-- **PM2** (gerenciamento de processos Node.js)
+Após a execução bem-sucedida do pipeline, você terá acesso a:
 
-### **🗄️ Bancos de Dados:**
-- **PostgreSQL** (container Docker)
-- **Redis** (container Docker)
+| Serviço | URL | Usuário | Senha |
+|---------|-----|---------|-------|
+| **Traefik** | `https://traefik.testes.possoatender.com` | - | - |
+| **Portainer** | `https://portainer.testes.possoatender.com` | `admin` | Configurada via variável |
+| **pgAdmin** | `https://pgadmin.testes.possoatender.com` | Configurado via variável | Configurada via variável |
+| **PostgreSQL** | `localhost:5432` | `postgres` | Configurada via variável |
+| **MongoDB** | `localhost:27017` | `admin` | Configurada via variável |
+| **Redis 1** | `localhost:6379` | - | Sem autenticação |
+| **Redis 2** | `localhost:6380` | - | Sem autenticação |
 
-### **🛠️ Ferramentas Adicionais:**
-- **htop** (monitoramento de sistema)
-- **tree** (visualização de diretórios)
-- **jq** (processamento JSON)
-- **curl/wget** (requisições HTTP)
-- **vim** (editor de texto)
-- **nginx** (servidor web)
-- **nodemon** (desenvolvimento Node.js)
-- **concurrently** (execução paralela)
-- **cross-env** (variáveis de ambiente)
+## 🔧 Configurações Técnicas
 
-### **🔥 Segurança:**
-- **UFW Firewall** configurado
-- **Portas específicas** liberadas
-- **SSH seguro** configurado
+### Portas Utilizadas:
+- **80/443**: Traefik (HTTP/HTTPS)
+- **5432**: PostgreSQL
+- **6379**: Redis 1 (cache temporário)
+- **6380**: Redis 2 (com persistência)
+- **27017**: MongoDB
+- **9000**: Portainer
+- **5050**: pgAdmin
 
-## 🔍 **Stages do Pipeline**
+### Volumes Persistentes:
+- `/opt/docker/volumes/postgres` - Dados PostgreSQL
+- `/opt/docker/volumes/redis-6380` - Dados Redis persistente
+- `/opt/docker/volumes/mongodb` - Dados MongoDB
+- `/opt/docker/volumes/traefik` - Configurações Traefik
+- `/opt/docker/volumes/portainer` - Dados Portainer
+- `/opt/docker/volumes/pgadmin` - Dados pgAdmin
 
-### **1. Verificar Conectividade**
-- Testa conexão SSH com a VM
-- Verifica informações básicas do sistema
+### Rede Docker:
+- **Nome**: `traefik_network`
+- **Tipo**: Bridge
+- **Todos os containers conectados**
 
-### **2. Verificar Dependências Existentes**
-- Verifica se Node.js, Docker, Git já estão instalados
-- Evita reinstalações desnecessárias
+## 🛡️ Segurança
 
-### **3. Instalar Node.js**
-- Remove versões antigas
-- Instala versão configurada via NodeSource
-- Instala PM2 globalmente
+### Firewall Configurado:
+- SSH permitido
+- Portas 80, 443, 3000, 8080, 9000, 5050 liberadas
+- Demais conexões bloqueadas
 
-### **4. Instalar Docker**
-- Remove versões antigas
-- Instala Docker CE oficial
-- Configura usuário no grupo docker
-- Habilita e inicia o serviço
+### Boas Práticas Implementadas:
+- Credenciais via variáveis de ambiente
+- Volumes persistentes para dados importantes
+- Redis sem persistência para cache temporário
+- Rede Docker isolada
+- Firewall configurado
 
-### **5. Configurar Containers de Banco**
-- Cria rede Docker para containers
-- Executa PostgreSQL com volume persistente
-- Executa Redis com volume persistente
-- Testa conectividade dos bancos
+## 📝 Logs e Monitoramento
 
-### **6. Instalar Ferramentas Adicionais**
-- Instala ferramentas de sistema
-- Instala ferramentas de desenvolvimento Node.js
+O pipeline inclui:
+- Verificação de conectividade
+- Testes de saúde dos containers
+- Logs detalhados de cada etapa
+- Resumo final com status de todos os serviços
 
-### **7. Configurar Firewall**
-- Instala e configura UFW
-- Libera portas necessárias
-- Habilita firewall
+## 🤝 Contribuição
 
-### **8. Teste Final do Ambiente**
-- Executa testes em todas as ferramentas
-- Verifica conectividade dos containers
-- Valida configuração completa
+1. Fork o projeto
+2. Crie uma branch para sua feature (`git checkout -b feature/AmazingFeature`)
+3. Commit suas mudanças (`git commit -m 'Add some AmazingFeature'`)
+4. Push para a branch (`git push origin feature/AmazingFeature`)
+5. Abra um Pull Request
 
-## 📊 **Monitoramento e Logs**
+## 📄 Licença
 
-### **Logs Detalhados:**
-- Cada stage gera logs específicos
-- Informações de versão das ferramentas
-- Status de containers e serviços
-- Testes de conectividade
-
-### **Tratamento de Erros:**
-- **Rollback automático** em caso de falha
-- **Logs de debug** para troubleshooting
-- **Informações de sistema** em caso de erro
-
-## 🔧 **Personalização**
-
-### **Adicionar Novas Ferramentas:**
-Edite o stage `'Instalar Ferramentas Adicionais'`:
-
-```groovy
-stage('Instalar Ferramentas Adicionais') {
-    steps {
-        script {
-            sh '''
-                ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
-                    # Suas ferramentas aqui
-                    sudo apt-get install -y sua-ferramenta
-                    sudo npm install -g seu-pacote-npm
-                '''
-            '''
-        }
-    }
-}
-```
-
-### **Adicionar Novos Containers:**
-Edite o stage `'Configurar Containers de Banco'`:
-
-```groovy
-# Exemplo: Adicionar MongoDB
-docker run -d \\
-    --name mongodb-app \\
-    --network app-network \\
-    -p 27017:27017 \\
-    -v mongodb_data:/data/db \\
-    mongo:latest
-```
-
-### **Configurar Novas Portas:**
-Edite o stage `'Configurar Firewall'`:
-
-```groovy
-sudo ufw allow 27017/tcp  # MongoDB
-sudo ufw allow 9000/tcp   # Porta customizada
-```
-
-## 🛡️ **Segurança**
-
-### **Boas Práticas Implementadas:**
-- **Usuário específico** para Jenkins
-- **Chaves SSH** em vez de senhas
-- **Firewall configurado** com regras específicas
-- **Containers isolados** em rede própria
-- **Volumes persistentes** para dados
-- **Logs de auditoria** completos
-
-### **Recomendações Adicionais:**
-- **Altere senhas padrão** dos bancos de dados
-- **Configure backup** dos volumes Docker
-- **Monitore logs** regularmente
-- **Atualize ferramentas** periodicamente
-
-## 🔄 **Manutenção**
-
-### **Atualizações:**
-- Execute o pipeline periodicamente para atualizar ferramentas
-- Monitore logs para identificar problemas
-- Faça backup dos volumes Docker antes de atualizações
-
-### **Troubleshooting:**
-- Verifique logs do Jenkins
-- Teste conectividade SSH manualmente
-- Verifique status dos containers: `docker ps`
-- Verifique logs dos containers: `docker logs [container]`
-
-## 📞 **Suporte**
-
-Para problemas ou dúvidas:
-1. Verifique os logs do Jenkins
-2. Execute testes manuais na VM
-3. Consulte a documentação das ferramentas
-4. Abra uma issue no repositório
-
----
-
-**🎯 Resultado Final:** Uma VM completamente configurada e pronta para desenvolvimento/produção com todas as ferramentas necessárias instaladas e configuradas automaticamente! 
+Este projeto está sob a licença MIT. Veja o arquivo `LICENSE` para mais detalhes. 
