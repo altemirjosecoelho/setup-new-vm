@@ -6,8 +6,8 @@ pipeline {
     environment {
         // Configurações de conexão SSH
         VM_HOST = '135.181.24.29'
-        VM_USER = 'ubuntu'  // ou o usuário que você usa na VM
-        VM_PASSWORD = 'sua_senha_aqui'  // configure no Jenkins como variável de ambiente
+        VM_USER = 'root'
+        VM_PASSWORD = 'zx100mil!'
         
         // Configurações de instalação
         NODE_VERSION = '21.x'
@@ -36,7 +36,32 @@ pipeline {
             }
         }
         
-
+        stage('Instalar Dependências') {
+            steps {
+                script {
+                    echo '📦 Instalando dependências...'
+                    sh '''
+                        # Verificar e instalar sshpass
+                        if ! command -v sshpass &> /dev/null; then
+                            echo "📦 Instalando sshpass..."
+                            sudo apt-get update
+                            sudo apt-get install -y sshpass
+                        else
+                            echo "✅ sshpass já está instalado"
+                        fi
+                        
+                        # Verificar se sshpass foi instalado
+                        if command -v sshpass &> /dev/null; then
+                            echo "✅ sshpass instalado: $(sshpass -V)"
+                        else
+                            echo "❌ Falha na instalação do sshpass"
+                            echo "💡 Tentando instalar expect como alternativa..."
+                            sudo apt-get install -y expect
+                        fi
+                    '''
+                }
+            }
+        }
         
         stage('Teste Mínimo') {
             steps {
@@ -44,16 +69,46 @@ pipeline {
                     echo '🧪 Testando conexão SSH e comandos básicos...'
                     
                     sh '''
-                        # Testar conexão SSH e executar comandos básicos
-                        sshpass -p "${VM_PASSWORD}" ssh -o StrictHostKeyChecking=no "${VM_USER}@${VM_HOST}" '
-                            echo "✅ Conexão SSH estabelecida!"
-                            echo "🖥️  Sistema: $(uname -a)"
-                            echo "📦 Executando apt update..."
-                            apt update
-                            echo "📦 Executando apt upgrade -y..."
-                            apt upgrade -y
-                            echo "🎉 Teste mínimo concluído com sucesso!"
-                        '
+                        # Tentar com sshpass primeiro
+                        if command -v sshpass &> /dev/null; then
+                            echo "🔑 Usando sshpass..."
+                            sshpass -p "${VM_PASSWORD}" ssh -o StrictHostKeyChecking=no "${VM_USER}@${VM_HOST}" '
+                                echo "✅ Conexão SSH estabelecida!"
+                                echo "🖥️  Sistema: $(uname -a)"
+                                echo "📦 Executando apt update..."
+                                apt update
+                                echo "📦 Executando apt upgrade -y..."
+                                apt upgrade -y
+                                echo "🎉 Teste mínimo concluído com sucesso!"
+                            '
+                        elif command -v expect &> /dev/null; then
+                            echo "🔑 Usando expect..."
+                            # Criar script expect temporário
+                            cat > /tmp/ssh_test.exp << "EOF"
+                            #!/usr/bin/expect -f
+                            set timeout 30
+                            spawn ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST}
+                            expect "password:"
+                            send "${VM_PASSWORD}\r"
+                            expect "$ "
+                            send "echo '✅ Conexão SSH estabelecida!'\r"
+                            send "echo '🖥️  Sistema:' \$(uname -a)\r"
+                            send "echo '📦 Executando apt update...'\r"
+                            send "apt update\r"
+                            send "echo '📦 Executando apt upgrade -y...'\r"
+                            send "apt upgrade -y\r"
+                            send "echo '🎉 Teste mínimo concluído com sucesso!'\r"
+                            send "exit\r"
+                            expect eof
+                            EOF
+                            chmod +x /tmp/ssh_test.exp
+                            /tmp/ssh_test.exp
+                            rm -f /tmp/ssh_test.exp
+                        else
+                            echo "❌ Nenhuma ferramenta de automação SSH disponível"
+                            echo "💡 Instale manualmente: sudo apt-get install sshpass"
+                            exit 1
+                        fi
                     '''
                 }
             }
