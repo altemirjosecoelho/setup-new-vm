@@ -65,6 +65,61 @@ pipeline {
                     echo '🔐 Credenciais configuradas via variáveis de ambiente'
                     echo "🖥️  VM: ${env.VM_HOST}"
                     echo "👤 Usuário: ${env.VM_USER}"
+                    echo "🔑 Chave SSH: ${env.SSH_KEY_PATH}"
+                }
+            }
+        }
+        
+        stage('Verificar Conectividade SSH') {
+            steps {
+                script {
+                    echo '🔍 Verificando conectividade SSH...'
+                    
+                    // Verificar se a chave SSH existe
+                    sh '''
+                        echo "🔑 Verificando chave SSH..."
+                        if [ -f "${SSH_KEY_PATH}" ]; then
+                            echo "✅ Chave SSH encontrada: ${SSH_KEY_PATH}"
+                            ls -la "${SSH_KEY_PATH}"
+                        else
+                            echo "❌ Chave SSH não encontrada: ${SSH_KEY_PATH}"
+                            echo "📁 Conteúdo do diretório .ssh:"
+                            ls -la /var/lib/jenkins/.ssh/ || echo "Diretório .ssh não existe"
+                            echo "🔧 Tentando criar chave SSH..."
+                            mkdir -p /var/lib/jenkins/.ssh
+                            ssh-keygen -t rsa -b 4096 -f /var/lib/jenkins/.ssh/id_rsa -N "" || echo "Falha ao criar chave SSH"
+                        fi
+                    '''
+                    
+                    // Testar conectividade SSH
+                    sh '''
+                        echo "🔍 Testando conectividade SSH..."
+                        echo "Tentando conectar via SSH..."
+                        
+                        # Tentar conexão SSH com timeout
+                        timeout 10 ssh -i "${SSH_KEY_PATH}" -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${VM_USER}@${VM_HOST}" 'echo "✅ Conexão SSH estabelecida"' || {
+                            echo "❌ Falha na conexão SSH"
+                            echo "🔧 Verificando configurações..."
+                            echo "Host: ${VM_HOST}"
+                            echo "Usuário: ${VM_USER}"
+                            echo "Chave: ${SSH_KEY_PATH}"
+                            
+                            # Tentar ping
+                            ping -c 3 "${VM_HOST}" && echo "✅ Host acessível via ping" || echo "❌ Host não acessível via ping"
+                            
+                            # Verificar porta SSH
+                            nc -zv "${VM_HOST}" 22 && echo "✅ Porta 22 acessível" || echo "❌ Porta 22 não acessível"
+                            
+                            echo "💡 Dicas para resolver:"
+                            echo "1. Verifique se a VM está rodando"
+                            echo "2. Verifique se o usuário '${VM_USER}' existe na VM"
+                            echo "3. Verifique se a chave SSH pública está adicionada ao authorized_keys da VM"
+                            echo "4. Verifique se o SSH está configurado para aceitar chaves públicas"
+                            echo "5. Verifique se o firewall permite conexões SSH"
+                            
+                            exit 1
+                        }
+                    '''
                 }
             }
         }
