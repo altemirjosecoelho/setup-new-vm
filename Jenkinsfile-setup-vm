@@ -36,43 +36,16 @@ pipeline {
             }
         }
         
-        stage('Instalar Dependências') {
+        stage('Teste Mínimo com SSH Agent') {
             steps {
                 script {
-                    echo '📦 Instalando dependências...'
-                    sh '''
-                        # Verificar e instalar sshpass
-                        if ! command -v sshpass &> /dev/null; then
-                            echo "📦 Instalando sshpass..."
-                            sudo apt-get update
-                            sudo apt-get install -y sshpass
-                        else
-                            echo "✅ sshpass já está instalado"
-                        fi
-                        
-                        # Verificar se sshpass foi instalado
-                        if command -v sshpass &> /dev/null; then
-                            echo "✅ sshpass instalado: $(sshpass -V)"
-                        else
-                            echo "❌ Falha na instalação do sshpass"
-                            echo "💡 Tentando instalar expect como alternativa..."
-                            sudo apt-get install -y expect
-                        fi
-                    '''
-                }
-            }
-        }
-        
-        stage('Teste Mínimo') {
-            steps {
-                script {
-                    echo '🧪 Testando conexão SSH e comandos básicos...'
+                    echo '🧪 Testando conexão SSH com SSH Agent...'
                     
-                    sh '''
-                        # Tentar com sshpass primeiro
-                        if command -v sshpass &> /dev/null; then
-                            echo "🔑 Usando sshpass..."
-                            sshpass -p "${VM_PASSWORD}" ssh -o StrictHostKeyChecking=no "${VM_USER}@${VM_HOST}" '
+                    // Usar SSH Agent para conectar
+                    sshagent(['jenkins-ssh-key']) {
+                        sh '''
+                            # Testar conexão SSH
+                            ssh -o StrictHostKeyChecking=no "${VM_USER}@${VM_HOST}" '
                                 echo "✅ Conexão SSH estabelecida!"
                                 echo "🖥️  Sistema: $(uname -a)"
                                 echo "📦 Executando apt update..."
@@ -81,34 +54,53 @@ pipeline {
                                 apt upgrade -y
                                 echo "🎉 Teste mínimo concluído com sucesso!"
                             '
-                        elif command -v expect &> /dev/null; then
-                            echo "🔑 Usando expect..."
-                            # Criar script expect temporário
-                            cat > /tmp/ssh_test.exp << "EOF"
-                            #!/usr/bin/expect -f
-                            set timeout 30
-                            spawn ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST}
-                            expect "password:"
-                            send "${VM_PASSWORD}\r"
-                            expect "$ "
-                            send "echo '✅ Conexão SSH estabelecida!'\r"
-                            send "echo '🖥️  Sistema:' \$(uname -a)\r"
-                            send "echo '📦 Executando apt update...'\r"
-                            send "apt update\r"
-                            send "echo '📦 Executando apt upgrade -y...'\r"
-                            send "apt upgrade -y\r"
-                            send "echo '🎉 Teste mínimo concluído com sucesso!'\r"
-                            send "exit\r"
-                            expect eof
-                            EOF
-                            chmod +x /tmp/ssh_test.exp
-                            /tmp/ssh_test.exp
-                            rm -f /tmp/ssh_test.exp
-                        else
-                            echo "❌ Nenhuma ferramenta de automação SSH disponível"
-                            echo "💡 Instale manualmente: sudo apt-get install sshpass"
-                            exit 1
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Teste Alternativo com Senha') {
+            when {
+                expression {
+                    return false // Desabilitado por padrão, habilite se necessário
+                }
+            }
+            steps {
+                script {
+                    echo '🔑 Testando com autenticação por senha...'
+                    
+                    // Usar expect para autenticação por senha
+                    sh '''
+                        # Verificar se expect está disponível
+                        if ! command -v expect &> /dev/null; then
+                            echo "📦 Instalando expect..."
+                            sudo apt-get update
+                            sudo apt-get install -y expect
                         fi
+                        
+                        # Criar script expect
+                        cat > /tmp/ssh_test.exp << "EOF"
+                        #!/usr/bin/expect -f
+                        set timeout 30
+                        spawn ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST}
+                        expect "password:"
+                        send "${VM_PASSWORD}\r"
+                        expect "$ "
+                        send "echo '✅ Conexão SSH estabelecida!'\r"
+                        send "echo '🖥️  Sistema:' \$(uname -a)\r"
+                        send "echo '📦 Executando apt update...'\r"
+                        send "apt update\r"
+                        send "echo '📦 Executando apt upgrade -y...'\r"
+                        send "apt upgrade -y\r"
+                        send "echo '🎉 Teste mínimo concluído com sucesso!'\r"
+                        send "exit\r"
+                        expect eof
+                        EOF
+                        
+                        chmod +x /tmp/ssh_test.exp
+                        /tmp/ssh_test.exp
+                        rm -f /tmp/ssh_test.exp
                     '''
                 }
             }
@@ -125,6 +117,10 @@ pipeline {
         failure {
             echo '❌ Setup da VM falhou!'
             echo '🔍 Verifique os logs para identificar o problema'
+            echo '💡 Dicas:'
+            echo '   1. Configure as credenciais SSH no Jenkins'
+            echo '   2. Verifique se a VM está acessível'
+            echo '   3. Use o stage alternativo com senha se necessário'
         }
     }
 } 
