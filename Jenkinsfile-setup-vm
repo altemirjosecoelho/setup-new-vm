@@ -26,7 +26,7 @@ pipeline {
                 script {
                     // Configurações de conexão SSH
                     env.VM_HOST = env.VM_HOST ?: '135.181.24.29'
-                    env.VM_USER = env.VM_USER ?: 'deploy'
+                    env.VM_USER = env.VM_USER ?: 'root'
                     env.VM_PASSWORD = env.VM_PASSWORD ?: 'zx100mil!'
                     
                     echo '🔐 Credenciais configuradas'
