@@ -27,6 +27,28 @@ pipeline {
         stage('Verificar e Instalar Docker') {
             steps {
                 script {
+                    echo "Verificando arquitetura do sistema..."
+                    
+                    // Detecta a arquitetura do processador
+                    def architecture = sh(
+                        script: 'uname -m',
+                        returnStdout: true
+                    ).trim()
+                    
+                    echo "Arquitetura detectada: ${architecture}"
+                    
+                    // Mapeia a arquitetura para o formato do Docker Compose
+                    def dockerComposeArch = ""
+                    if (architecture == "x86_64") {
+                        dockerComposeArch = "x86_64"
+                        echo "Processador AMD64 detectado"
+                    } else if (architecture == "aarch64" || architecture == "arm64") {
+                        dockerComposeArch = "aarch64"
+                        echo "Processador ARM64 detectado"
+                    } else {
+                        error "Arquitetura não suportada: ${architecture}"
+                    }
+                    
                     echo "Verificando se o Docker está instalado..."
                     
                     // Verifica se o Docker está instalado
@@ -65,13 +87,13 @@ pipeline {
                     ) == 0
                     
                     if (!dockerComposeInstalled) {
-                        echo "Docker Compose não encontrado. Instalando..."
-                        sh '''
-                            # Instalar Docker Compose
-                            curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+                        echo "Docker Compose não encontrado. Instalando para arquitetura ${dockerComposeArch}..."
+                        sh """
+                            # Instalar Docker Compose para a arquitetura específica
+                            curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${dockerComposeArch}" -o /usr/local/bin/docker-compose
                             chmod +x /usr/local/bin/docker-compose
-                        '''
-                        echo "Docker Compose instalado com sucesso!"
+                        """
+                        echo "Docker Compose instalado com sucesso para ${dockerComposeArch}!"
                     } else {
                         echo "Docker Compose já está instalado!"
                         sh 'docker-compose --version'
