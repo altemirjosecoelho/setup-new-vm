@@ -36,36 +36,7 @@ pipeline {
             }
         }
         
-        stage('Verificar sshpass') {
-            steps {
-                script {
-                    echo '🔍 Verificando sshpass...'
-                    sh '''
-                        # Verificar se sshpass já está instalado
-                        if command -v sshpass &> /dev/null; then
-                            echo "✅ sshpass já está instalado"
-                        else
-                            echo "❌ sshpass não está instalado"
-                            echo "💡 Instale manualmente: sudo apt-get install sshpass"
-                            echo "💡 Ou use: sudo apt-get install -y sshpass"
-                            exit 1
-                        fi
-                    '''
-                }
-            }
-        }
-        
-        stage('Testar Conexão SSH') {
-            steps {
-                script {
-                    echo '🔍 Testando conexão SSH...'
-                    sh '''
-                        # Testar conexão SSH com senha
-                        sshpass -p "${VM_PASSWORD}" ssh -o StrictHostKeyChecking=no "${VM_USER}@${VM_HOST}" 'echo "✅ Conexão SSH estabelecida"'
-                    '''
-                }
-            }
-        }
+
         
         stage('Setup da VM') {
             steps {
