@@ -36,14 +36,20 @@ pipeline {
             }
         }
         
-        stage('Instalar sshpass') {
+        stage('Verificar sshpass') {
             steps {
                 script {
-                    echo '📦 Instalando sshpass...'
+                    echo '🔍 Verificando sshpass...'
                     sh '''
-                        # Instalar sshpass para autenticação por senha
-                        sudo apt-get update
-                        sudo apt-get install -y sshpass
+                        # Verificar se sshpass já está instalado
+                        if command -v sshpass &> /dev/null; then
+                            echo "✅ sshpass já está instalado"
+                        else
+                            echo "❌ sshpass não está instalado"
+                            echo "💡 Instale manualmente: sudo apt-get install sshpass"
+                            echo "💡 Ou use: sudo apt-get install -y sshpass"
+                            exit 1
+                        fi
                     '''
                 }
             }
@@ -73,44 +79,41 @@ pipeline {
                             
                             # Atualizar sistema
                             echo "📦 Atualizando sistema..."
-                            sudo apt-get update
-                            sudo apt-get upgrade -y
+                            apt-get update
+                            apt-get upgrade -y
                             
                             # Instalar dependências básicas
                             echo "🔧 Instalando dependências básicas..."
-                            sudo apt-get install -y curl wget git vim htop tree jq unzip net-tools nginx certbot python3-certbot-nginx
+                            apt-get install -y curl wget git vim htop tree jq unzip net-tools nginx certbot python3-certbot-nginx
                             
                             # Instalar Node.js
                             echo "📦 Instalando Node.js..."
-                            curl -fsSL https://deb.nodesource.com/setup_21.x | sudo -E bash -
-                            sudo apt-get install -y nodejs
+                            curl -fsSL https://deb.nodesource.com/setup_21.x | bash -
+                            apt-get install -y nodejs
                             
                             # Instalar PM2
                             echo "⚡ Instalando PM2..."
-                            sudo npm install -g pm2 nodemon concurrently cross-env
+                            npm install -g pm2 nodemon concurrently cross-env
                             
                             # Instalar Docker
                             echo "🐳 Instalando Docker..."
-                            sudo apt-get remove -y docker docker-engine docker.io containerd runc || true
-                            sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release
+                            apt-get remove -y docker docker-engine docker.io containerd runc || true
+                            apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release
                             
-                            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-                            echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+                            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                            echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
                             
-                            sudo apt-get update
-                            sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-                            
-                            # Adicionar usuário ao grupo docker
-                            sudo usermod -aG docker $USER
+                            apt-get update
+                            apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
                             
                             # Iniciar e habilitar Docker
-                            sudo systemctl start docker
-                            sudo systemctl enable docker
+                            systemctl start docker
+                            systemctl enable docker
                             
                             # Criar diretórios para volumes
                             echo "📁 Criando diretórios para volumes..."
-                            sudo mkdir -p /opt/docker/volumes/{postgres,redis-6380,mongodb,traefik,portainer,pgadmin}
-                            sudo chown -R 1000:1000 /opt/docker/volumes/
+                            mkdir -p /opt/docker/volumes/{postgres,redis-6380,mongodb,traefik,portainer,pgadmin}
+                            chown -R 1000:1000 /opt/docker/volumes/
                             
                             # Parar e remover containers existentes
                             echo "🧹 Limpando containers existentes..."
@@ -218,18 +221,18 @@ pipeline {
                             
                             # Configurar firewall
                             echo "🔥 Configurando firewall..."
-                            sudo apt-get install -y ufw
-                            sudo ufw --force reset
-                            sudo ufw default deny incoming
-                            sudo ufw default allow outgoing
-                            sudo ufw allow ssh
-                            sudo ufw allow 80/tcp
-                            sudo ufw allow 443/tcp
-                            sudo ufw allow 3000/tcp
-                            sudo ufw allow 8080/tcp
-                            sudo ufw allow 9000/tcp
-                            sudo ufw allow 5050/tcp
-                            sudo ufw --force enable
+                            apt-get install -y ufw
+                            ufw --force reset
+                            ufw default deny incoming
+                            ufw default allow outgoing
+                            ufw allow ssh
+                            ufw allow 80/tcp
+                            ufw allow 443/tcp
+                            ufw allow 3000/tcp
+                            ufw allow 8080/tcp
+                            ufw allow 9000/tcp
+                            ufw allow 5050/tcp
+                            ufw --force enable
                             
                             # Testes finais
                             echo "🧪 Executando testes finais..."
