@@ -1,0 +1,64 @@
+pipeline {
+    agent {
+        label 'jenkins-testes'
+    }
+    
+    stages {
+        stage('Atualizar Repositórios') {
+            steps {
+                script {
+                    echo "Iniciando atualização dos repositórios..."
+                    sh 'apt update'
+                    echo "Repositórios atualizados com sucesso!"
+                }
+            }
+        }
+        
+        stage('Atualizar Pacotes') {
+            steps {
+                script {
+                    echo "Iniciando atualização dos pacotes..."
+                    sh 'apt upgrade -y'
+                    echo "Pacotes atualizados com sucesso!"
+                }
+            }
+        }
+        
+        stage('Verificar Status') {
+            steps {
+                script {
+                    echo "Verificando status do sistema após atualizações..."
+                    sh '''
+                        echo "=== Informações do Sistema ==="
+                        echo "Data/Hora: $(date)"
+                        echo "Uptime: $(uptime)"
+                        echo "Versão do Kernel: $(uname -r)"
+                        echo "Distribuição: $(lsb_release -d | cut -f2)"
+                        echo "=== Espaço em Disco ==="
+                        df -h
+                        echo "=== Memória ==="
+                        free -h
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                echo "Pipeline de atualização do sistema concluído!"
+            }
+        }
+        success {
+            script {
+                echo "✅ Atualizações realizadas com sucesso!"
+            }
+        }
+        failure {
+            script {
+                echo "❌ Erro durante as atualizações!"
+            }
+        }
+    }
+} 
