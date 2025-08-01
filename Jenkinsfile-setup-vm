@@ -1,0 +1,374 @@
+pipeline {
+    agent {
+        label 'Jenkins-Testes-agent'
+    }
+    
+    environment {
+        VM_HOST = '192.168.1.100'  // IP da VM
+        VM_USER = 'jenkins'        // Usuário SSH
+        SSH_KEY_PATH = '/var/lib/jenkins/.ssh/id_rsa'
+        
+        // Configurações de instalação
+        NODE_VERSION = '18.x'
+        DOCKER_VERSION = 'latest'
+        POSTGRES_VERSION = '15'
+        REDIS_VERSION = '7'
+        
+        // Configurações de containers
+        POSTGRES_CONTAINER = 'postgres-app'
+        REDIS_CONTAINER = 'redis-app'
+        POSTGRES_PORT = '5432'
+        REDIS_PORT = '6379'
+        POSTGRES_PASSWORD = 'postgres123'
+        POSTGRES_DB = 'appdb'
+    }
+    
+    stages {
+        stage('Verificar Conectividade') {
+            steps {
+                script {
+                    echo '🔍 Verificando conectividade com a VM...'
+                    sh '''
+                        # Testa conectividade SSH
+                        ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} 'echo "✅ Conexão SSH estabelecida"'
+                        
+                        # Verifica informações básicas da VM
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                            echo "🖥️  Sistema: $(uname -a)"
+                            echo "💾 Memória: $(free -h)"
+                            echo "💿 Disco: $(df -h)"
+                            echo "🌐 IP: $(hostname -I)"
+                        '''
+                    '''
+                }
+            }
+        }
+        
+        stage('Verificar Dependências Existentes') {
+            steps {
+                script {
+                    echo '🔍 Verificando dependências já instaladas...'
+                    sh '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                            echo "📦 Verificando Node.js..."
+                            if command -v node &> /dev/null; then
+                                echo "✅ Node.js encontrado: $(node --version)"
+                            else
+                                echo "❌ Node.js não encontrado"
+                            fi
+                            
+                            echo "🐳 Verificando Docker..."
+                            if command -v docker &> /dev/null; then
+                                echo "✅ Docker encontrado: $(docker --version)"
+                            else
+                                echo "❌ Docker não encontrado"
+                            fi
+                            
+                            echo "📦 Verificando NPM..."
+                            if command -v npm &> /dev/null; then
+                                echo "✅ NPM encontrado: $(npm --version)"
+                            else
+                                echo "❌ NPM não encontrado"
+                            fi
+                            
+                            echo "🔧 Verificando Git..."
+                            if command -v git &> /dev/null; then
+                                echo "✅ Git encontrado: $(git --version)"
+                            else
+                                echo "❌ Git não encontrado"
+                            fi
+                        '''
+                    '''
+                }
+            }
+        }
+        
+        stage('Instalar Node.js') {
+            when {
+                expression {
+                    // Só executa se Node.js não estiver instalado
+                    return true // Sempre executa para garantir versão correta
+                }
+            }
+            steps {
+                script {
+                    echo '📦 Instalando/Atualizando Node.js...'
+                    sh '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                            # Atualiza repositórios
+                            sudo apt-get update
+                            
+                            # Remove versões antigas do Node.js
+                            sudo apt-get remove -y nodejs npm || true
+                            
+                            # Instala Node.js via NodeSource
+                            curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION} | sudo -E bash -
+                            sudo apt-get install -y nodejs
+                            
+                            # Verifica instalação
+                            echo "✅ Node.js instalado: $(node --version)"
+                            echo "✅ NPM instalado: $(npm --version)"
+                            
+                            # Instala PM2 para gerenciamento de processos
+                            sudo npm install -g pm2
+                            echo "✅ PM2 instalado: $(pm2 --version)"
+                        '''
+                    '''
+                }
+            }
+        }
+        
+        stage('Instalar Docker') {
+            when {
+                expression {
+                    return true // Sempre executa para garantir versão correta
+                }
+            }
+            steps {
+                script {
+                    echo '🐳 Instalando/Atualizando Docker...'
+                    sh '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                            # Remove versões antigas
+                            sudo apt-get remove -y docker docker-engine docker.io containerd runc || true
+                            
+                            # Instala dependências
+                            sudo apt-get update
+                            sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release
+                            
+                            # Adiciona repositório oficial do Docker
+                            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                            echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+                            
+                            # Instala Docker
+                            sudo apt-get update
+                            sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+                            
+                            # Adiciona usuário ao grupo docker
+                            sudo usermod -aG docker ${USER}
+                            
+                            # Inicia e habilita Docker
+                            sudo systemctl start docker
+                            sudo systemctl enable docker
+                            
+                            # Verifica instalação
+                            echo "✅ Docker instalado: $(docker --version)"
+                            echo "✅ Docker Compose instalado: $(docker compose version)"
+                        '''
+                    '''
+                }
+            }
+        }
+        
+        stage('Configurar Containers de Banco') {
+            steps {
+                script {
+                    echo '🗄️ Configurando containers de banco de dados...'
+                    sh '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                            # Para containers existentes
+                            docker stop ${POSTGRES_CONTAINER} ${REDIS_CONTAINER} || true
+                            docker rm ${POSTGRES_CONTAINER} ${REDIS_CONTAINER} || true
+                            
+                            # Cria rede para containers
+                            docker network create app-network || true
+                            
+                            # Executa PostgreSQL
+                            docker run -d \\
+                                --name ${POSTGRES_CONTAINER} \\
+                                --network app-network \\
+                                -e POSTGRES_PASSWORD=${POSTGRES_PASSWORD} \\
+                                -e POSTGRES_DB=${POSTGRES_DB} \\
+                                -p ${POSTGRES_PORT}:5432 \\
+                                -v postgres_data:/var/lib/postgresql/data \\
+                                postgres:${POSTGRES_VERSION}
+                            
+                            # Executa Redis
+                            docker run -d \\
+                                --name ${REDIS_CONTAINER} \\
+                                --network app-network \\
+                                -p ${REDIS_PORT}:6379 \\
+                                -v redis_data:/data \\
+                                redis:${REDIS_VERSION}
+                            
+                            # Aguarda inicialização
+                            sleep 10
+                            
+                            # Verifica se containers estão rodando
+                            echo "📊 Status dos containers:"
+                            docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
+                            
+                            # Testa conexão com PostgreSQL
+                            echo "🔍 Testando PostgreSQL..."
+                            docker exec ${POSTGRES_CONTAINER} pg_isready -U postgres && echo "✅ PostgreSQL OK" || echo "❌ PostgreSQL falhou"
+                            
+                            # Testa conexão com Redis
+                            echo "🔍 Testando Redis..."
+                            docker exec ${REDIS_CONTAINER} redis-cli ping && echo "✅ Redis OK" || echo "❌ Redis falhou"
+                        '''
+                    '''
+                }
+            }
+        }
+        
+        stage('Instalar Ferramentas Adicionais') {
+            steps {
+                script {
+                    echo '🛠️ Instalando ferramentas adicionais...'
+                    sh '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                            # Atualiza repositórios
+                            sudo apt-get update
+                            
+                            # Instala ferramentas úteis
+                            sudo apt-get install -y \\
+                                htop \\
+                                tree \\
+                                jq \\
+                                curl \\
+                                wget \\
+                                unzip \\
+                                git \\
+                                vim \\
+                                net-tools \\
+                                nginx
+                            
+                            # Instala ferramentas de monitoramento
+                            sudo npm install -g \\
+                                nodemon \\
+                                concurrently \\
+                                cross-env
+                            
+                            echo "✅ Ferramentas adicionais instaladas"
+                        '''
+                    '''
+                }
+            }
+        }
+        
+        stage('Configurar Firewall') {
+            steps {
+                script {
+                    echo '🔥 Configurando firewall...'
+                    sh '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                            # Instala UFW se não estiver instalado
+                            sudo apt-get install -y ufw
+                            
+                            # Configura regras básicas
+                            sudo ufw --force reset
+                            sudo ufw default deny incoming
+                            sudo ufw default allow outgoing
+                            
+                            # Permite SSH
+                            sudo ufw allow ssh
+                            
+                            # Permite portas da aplicação
+                            sudo ufw allow 80/tcp   # HTTP
+                            sudo ufw allow 443/tcp  # HTTPS
+                            sudo ufw allow 3000/tcp # Node.js app
+                            sudo ufw allow 8080/tcp # Jenkins
+                            
+                            # Habilita firewall
+                            sudo ufw --force enable
+                            
+                            echo "✅ Firewall configurado"
+                            sudo ufw status
+                        '''
+                    '''
+                }
+            }
+        }
+        
+        stage('Teste Final do Ambiente') {
+            steps {
+                script {
+                    echo '🧪 Executando testes finais do ambiente...'
+                    sh '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                            echo "🔍 Teste 1: Node.js"
+                            node --version && echo "✅ Node.js OK" || echo "❌ Node.js falhou"
+                            
+                            echo "🔍 Teste 2: NPM"
+                            npm --version && echo "✅ NPM OK" || echo "❌ NPM falhou"
+                            
+                            echo "🔍 Teste 3: Docker"
+                            docker --version && echo "✅ Docker OK" || echo "❌ Docker falhou"
+                            
+                            echo "🔍 Teste 4: PostgreSQL Container"
+                            docker exec ${POSTGRES_CONTAINER} pg_isready -U postgres && echo "✅ PostgreSQL OK" || echo "❌ PostgreSQL falhou"
+                            
+                            echo "🔍 Teste 5: Redis Container"
+                            docker exec ${REDIS_CONTAINER} redis-cli ping && echo "✅ Redis OK" || echo "❌ Redis falhou"
+                            
+                            echo "🔍 Teste 6: PM2"
+                            pm2 --version && echo "✅ PM2 OK" || echo "❌ PM2 falhou"
+                            
+                            echo "🔍 Teste 7: Git"
+                            git --version && echo "✅ Git OK" || echo "❌ Git falhou"
+                            
+                            echo "🔍 Teste 8: Nginx"
+                            nginx -v && echo "✅ Nginx OK" || echo "❌ Nginx falhou"
+                        '''
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                echo '🏁 Setup da VM finalizado!'
+                echo "📊 Resumo do ambiente configurado:"
+                echo "   🖥️  VM: ${VM_HOST}"
+                echo "   👤 Usuário: ${VM_USER}"
+                echo "   📦 Node.js: ${NODE_VERSION}"
+                echo "   🐳 Docker: ${DOCKER_VERSION}"
+                echo "   🗄️  PostgreSQL: ${POSTGRES_VERSION}"
+                echo "   🔴 Redis: ${REDIS_VERSION}"
+            }
+        }
+        success {
+            script {
+                echo '🎉 Setup da VM realizado com sucesso!'
+                sh '''
+                    ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                        echo "=========================================="
+                        echo "🎯 AMBIENTE CONFIGURADO COM SUCESSO"
+                        echo "🖥️  VM: ${VM_HOST}"
+                        echo "📦 Node.js: $(node --version)"
+                        echo "🐳 Docker: $(docker --version)"
+                        echo "🗄️  PostgreSQL: Rodando na porta ${POSTGRES_PORT}"
+                        echo "🔴 Redis: Rodando na porta ${REDIS_PORT}"
+                        echo "🛠️  Ferramentas: PM2, Git, Nginx, etc."
+                        echo "🔥 Firewall: Configurado e ativo"
+                        echo "=========================================="
+                    '''
+                '''
+            }
+        }
+        failure {
+            script {
+                echo '❌ Setup da VM falhou!'
+                echo '🔍 Verifique os logs para identificar o problema'
+                
+                // Tenta coletar informações de debug
+                sh '''
+                    ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                        echo "=========================================="
+                        echo "❌ SETUP FALHOU - DEBUG INFO"
+                        echo "🖥️  Sistema: $(uname -a)"
+                        echo "💾 Memória: $(free -h)"
+                        echo "💿 Disco: $(df -h)"
+                        echo "🌐 Rede: $(ip addr show)"
+                        echo "=========================================="
+                    '''
+                '''
+            }
+        }
+        cleanup {
+            echo '🧹 Limpeza final...'
+        }
+    }
+} 
