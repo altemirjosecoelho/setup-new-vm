@@ -106,6 +106,92 @@ pipeline {
             }
         }
         
+        stage('Verificar e Instalar Node.js v21') {
+            steps {
+                script {
+                    echo "Verificando se o Node.js v21 está instalado..."
+                    
+                    // Verifica se o Node.js está instalado e qual versão
+                    def nodeInstalled = sh(
+                        script: 'which node',
+                        returnStatus: true
+                    ) == 0
+                    
+                    def nodeVersion = ""
+                    if (nodeInstalled) {
+                        nodeVersion = sh(
+                            script: 'node --version',
+                            returnStdout: true
+                        ).trim()
+                        echo "Node.js encontrado: ${nodeVersion}"
+                    }
+                    
+                    // Verifica se é a versão 21.x
+                    def needsInstall = !nodeInstalled || !nodeVersion.startsWith("v21")
+                    
+                    if (needsInstall) {
+                        echo "Node.js v21 não encontrado. Instalando..."
+                        
+                        // Detecta a arquitetura novamente para o Node.js
+                        def architecture = sh(
+                            script: 'uname -m',
+                            returnStdout: true
+                        ).trim()
+                        
+                        def nodeArch = ""
+                        if (architecture == "x86_64") {
+                            nodeArch = "x64"
+                            echo "Instalando Node.js v21 para AMD64"
+                        } else if (architecture == "aarch64" || architecture == "arm64") {
+                            nodeArch = "arm64"
+                            echo "Instalando Node.js v21 para ARM64"
+                        } else {
+                            error "Arquitetura não suportada para Node.js: ${architecture}"
+                        }
+                        
+                        sh """
+                            # Remover versões antigas do Node.js se existirem
+                            if command -v node &> /dev/null; then
+                                echo "Removendo versão anterior do Node.js..."
+                                apt-get remove -y nodejs npm
+                                rm -rf /usr/local/bin/node /usr/local/bin/npm
+                            fi
+                            
+                            # Baixar e instalar Node.js v21
+                            cd /tmp
+                            curl -fsSL https://nodejs.org/dist/v21.7.1/node-v21.7.1-linux-${nodeArch}.tar.xz -o nodejs.tar.xz
+                            tar -xf nodejs.tar.xz
+                            mv node-v21.7.1-linux-${nodeArch} /usr/local/nodejs
+                            
+                            # Criar links simbólicos
+                            ln -sf /usr/local/nodejs/bin/node /usr/local/bin/node
+                            ln -sf /usr/local/nodejs/bin/npm /usr/local/bin/npm
+                            ln -sf /usr/local/nodejs/bin/npx /usr/local/bin/npx
+                            
+                            # Limpar arquivos temporários
+                            rm -f nodejs.tar.xz
+                            
+                            # Atualizar PATH para sessão atual
+                            export PATH=/usr/local/bin:\$PATH
+                        """
+                        
+                        echo "Node.js v21 instalado com sucesso!"
+                    } else {
+                        echo "Node.js v21 já está instalado!"
+                    }
+                    
+                    // Verifica a instalação
+                    sh '''
+                        echo "=== Verificação do Node.js ==="
+                        node --version
+                        npm --version
+                        npx --version
+                        echo "=== Verificação concluída ==="
+                    '''
+                }
+            }
+        }
+        
         stage('Verificar Status') {
             steps {
                 script {
