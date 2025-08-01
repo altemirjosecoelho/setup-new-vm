@@ -192,6 +192,40 @@ pipeline {
             }
         }
         
+        stage('Exibir Senha de Teste') {
+            steps {
+                script {
+                    echo "=== SENHA DE TESTE ==="
+                    
+                    // Verifica se a variável de ambiente TEST_PASSWORD está definida
+                    if (env.TEST_PASSWORD) {
+                        echo "🔐 Senha de teste configurada: ${env.TEST_PASSWORD}"
+                    } else {
+                        echo "⚠️  Variável TEST_PASSWORD não encontrada!"
+                        echo "Para configurar a senha no Jenkins:"
+                        echo "1. Vá em Configurar o Job"
+                        echo "2. Seção 'Build Environment'"
+                        echo "3. Marque 'Inject environment variables'"
+                        echo "4. Adicione: TEST_PASSWORD=sua_senha_aqui"
+                        echo ""
+                        echo "Ou configure como variável global no Jenkins:"
+                        echo "Manage Jenkins > Configure System > Global properties"
+                    }
+                    
+                    // Também verifica outras variáveis de senha comuns
+                    if (env.ADMIN_PASSWORD) {
+                        echo "🔑 Senha de administrador: ${env.ADMIN_PASSWORD}"
+                    }
+                    
+                    if (env.DB_PASSWORD) {
+                        echo "🗄️  Senha do banco de dados: ${env.DB_PASSWORD}"
+                    }
+                    
+                    echo "=== FIM DA SENHA DE TESTE ==="
+                }
+            }
+        }
+        
         stage('Verificar Status') {
             steps {
                 script {
