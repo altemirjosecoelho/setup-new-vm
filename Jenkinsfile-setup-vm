@@ -78,12 +78,12 @@ pipeline {
                         ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} 'echo "✅ Conexão SSH estabelecida"'
                         
                         # Verifica informações básicas da VM
-                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} """
                             echo "🖥️  Sistema: \$(uname -a)"
                             echo "💾 Memória: \$(free -h)"
                             echo "💿 Disco: \$(df -h)"
                             echo "🌐 IP: \$(hostname -I)"
-                        '''
+                        """
                     '''
                 }
             }
@@ -94,7 +94,7 @@ pipeline {
                 script {
                     echo '🔍 Verificando dependências já instaladas...'
                     sh '''
-                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} """
                             echo "📦 Verificando Node.js..."
                             if command -v node &> /dev/null; then
                                 echo "✅ Node.js encontrado: \$(node --version)"
@@ -122,7 +122,7 @@ pipeline {
                             else
                                 echo "❌ Git não encontrado"
                             fi
-                        '''
+                        """
                     '''
                 }
             }
@@ -138,7 +138,7 @@ pipeline {
                 script {
                     echo '📦 Instalando/Atualizando Node.js...'
                     sh '''
-                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} """
                             # Atualiza repositórios
                             sudo apt-get update
                             
@@ -156,7 +156,7 @@ pipeline {
                             # Instala PM2 para gerenciamento de processos
                             sudo npm install -g pm2
                             echo "✅ PM2 instalado: \$(pm2 --version)"
-                        '''
+                        """
                     '''
                 }
             }
@@ -172,7 +172,7 @@ pipeline {
                 script {
                     echo '🐳 Instalando/Atualizando Docker...'
                     sh '''
-                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} """
                             # Remove versões antigas
                             sudo apt-get remove -y docker docker-engine docker.io containerd runc || true
                             
@@ -198,7 +198,7 @@ pipeline {
                             # Verifica instalação
                             echo "✅ Docker instalado: \$(docker --version)"
                             echo "✅ Docker Compose instalado: \$(docker compose version)"
-                        '''
+                        """
                     '''
                 }
             }
@@ -209,7 +209,7 @@ pipeline {
                 script {
                     echo '🏗️ Configurando infraestrutura Docker completa...'
                     sh '''
-                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} """
                             # Para containers existentes
                             docker stop ${TRAEFIK_CONTAINER} ${PORTAINER_CONTAINER} ${POSTGRES_CONTAINER} ${REDIS_CONTAINER_1} ${REDIS_CONTAINER_2} ${MONGODB_CONTAINER} ${PGADMIN_CONTAINER} || true
                             docker rm ${TRAEFIK_CONTAINER} ${PORTAINER_CONTAINER} ${POSTGRES_CONTAINER} ${REDIS_CONTAINER_1} ${REDIS_CONTAINER_2} ${MONGODB_CONTAINER} ${PGADMIN_CONTAINER} || true
@@ -332,7 +332,7 @@ pipeline {
                             
                             echo "🔍 Testando MongoDB..."
                             docker exec ${MONGODB_CONTAINER} mongosh --eval "db.adminCommand('ping')" && echo "✅ MongoDB OK" || echo "❌ MongoDB falhou"
-                        '''
+                        """
                     '''
                 }
             }
@@ -343,7 +343,7 @@ pipeline {
                 script {
                     echo '🔐 Configurando usuários e senhas...'
                     sh '''
-                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} """
                             echo "🔐 Configurando Portainer..."
                             # Aguarda Portainer inicializar completamente
                             sleep 30
@@ -364,7 +364,7 @@ pipeline {
                             echo "   🔴 Redis 6379: sem autenticação (cache temporário, sem persistência)"
                             echo "   🔴 Redis 6380: sem autenticação (com persistência)"
                             echo "   🍃 MongoDB: admin / ${MONGODB_PASSWORD}"
-                        '''
+                        """
                     '''
                 }
             }
@@ -375,7 +375,7 @@ pipeline {
                 script {
                     echo '🛠️ Instalando ferramentas adicionais...'
                     sh '''
-                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} """
                             # Atualiza repositórios
                             sudo apt-get update
                             
@@ -401,7 +401,7 @@ pipeline {
                                 cross-env
                             
                             echo "✅ Ferramentas adicionais instaladas"
-                        '''
+                        """
                     '''
                 }
             }
@@ -412,7 +412,7 @@ pipeline {
                 script {
                     echo '🔥 Configurando firewall...'
                     sh '''
-                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} """
                             # Instala UFW se não estiver instalado
                             sudo apt-get install -y ufw
                             
@@ -437,7 +437,7 @@ pipeline {
                             
                             echo "✅ Firewall configurado"
                             sudo ufw status
-                        '''
+                        """
                     '''
                 }
             }
@@ -448,7 +448,7 @@ pipeline {
                 script {
                     echo '🧪 Executando testes finais do ambiente...'
                     sh '''
-                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                        ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} """
                             echo "🔍 Teste 1: Node.js"
                             node --version && echo "✅ Node.js OK" || echo "❌ Node.js falhou"
                             
@@ -487,7 +487,7 @@ pipeline {
                             
                             echo "🔍 Teste 13: Nginx"
                             nginx -v && echo "✅ Nginx OK" || echo "❌ Nginx falhou"
-                        '''
+                        """
                     '''
                 }
             }
@@ -515,7 +515,7 @@ pipeline {
             script {
                 echo '🎉 Setup da VM realizado com sucesso!'
                 sh '''
-                    ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                    ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} """
                         echo "=========================================="
                         echo "🎯 INFRAESTRUTURA CONFIGURADA COM SUCESSO"
                         echo "🖥️  VM: ${VM_HOST}"
@@ -539,7 +539,7 @@ pipeline {
                         echo "   PostgreSQL: postgres / ${POSTGRES_PASSWORD}"
                         echo "   MongoDB: admin / ${MONGODB_PASSWORD}"
                         echo "=========================================="
-                    '''
+                    """
                 '''
             }
         }
@@ -550,7 +550,7 @@ pipeline {
                 
                 // Tenta coletar informações de debug
                 sh '''
-                    ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} '''
+                    ssh -i ${SSH_KEY_PATH} ${VM_USER}@${VM_HOST} """
                         echo "=========================================="
                         echo "❌ SETUP FALHOU - DEBUG INFO"
                         echo "🖥️  Sistema: \$(uname -a)"
@@ -560,7 +560,7 @@ pipeline {
                         echo "🐳 Containers:"
                         docker ps -a
                         echo "=========================================="
-                    '''
+                    """
                 '''
             }
         }
