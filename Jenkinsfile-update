@@ -24,6 +24,54 @@ pipeline {
             }
         }
         
+        stage('Instalar Utilitários Essenciais') {
+            steps {
+                script {
+                    echo "Instalando utilitários essenciais..."
+                    
+                    // Lista de pacotes essenciais para instalar
+                    def essentialPackages = [
+                        'apache2-utils',  // Para htpasswd
+                        'curl',           // Para downloads
+                        'wget',           // Para downloads alternativos
+                        'git',            // Para controle de versão
+                        'unzip',          // Para extrair arquivos
+                        'htop',           // Monitor de sistema
+                        'tree'            // Visualizar estrutura de diretórios
+                    ]
+                    
+                    essentialPackages.each { package ->
+                        def isInstalled = sh(
+                            script: "dpkg -l | grep -q '^ii.*${package}'",
+                            returnStatus: true
+                        ) == 0
+                        
+                        if (!isInstalled) {
+                            echo "📦 Instalando ${package}..."
+                            sh "apt-get install -y ${package}"
+                            echo "✅ ${package} instalado com sucesso!"
+                        } else {
+                            echo "ℹ️  ${package} já está instalado"
+                        }
+                    }
+                    
+                    echo "✅ Utilitários essenciais instalados/verificados!"
+                    
+                    // Verifica se htpasswd está funcionando
+                    sh '''
+                        echo "=== VERIFICAÇÃO DO HTPASSWD ==="
+                        if command -v htpasswd &> /dev/null; then
+                            echo "✅ htpasswd encontrado: $(which htpasswd)"
+                            echo "Versão: $(htpasswd -h 2>&1 | head -1)"
+                        else
+                            echo "❌ htpasswd não encontrado!"
+                        fi
+                        echo "================================"
+                    '''
+                }
+            }
+        }
+        
         stage('Verificar e Instalar Docker') {
             steps {
                 script {

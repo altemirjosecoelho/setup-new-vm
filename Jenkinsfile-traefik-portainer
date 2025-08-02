@@ -141,10 +141,54 @@ pipeline {
                     echo "Verificando arquivos Docker Compose existentes..."
                     
                     // Gera hash da senha para o Traefik
-                    def passwordHash = sh(
-                        script: "htpasswd -nbB admin '${env.ADMIN_PASSWORD}' | cut -d ':' -f 2",
-                        returnStdout: true
-                    ).trim()
+                    def passwordHash = ""
+                    
+                    // Tenta usar htpasswd se disponível
+                    def htpasswdAvailable = sh(
+                        script: "which htpasswd",
+                        returnStatus: true
+                    ) == 0
+                    
+                    if (htpasswdAvailable) {
+                        passwordHash = sh(
+                            script: "htpasswd -nbB admin '${env.ADMIN_PASSWORD}' | cut -d ':' -f 2",
+                            returnStdout: true
+                        ).trim()
+                        echo "✅ Hash gerado usando htpasswd"
+                    } else {
+                        // Instala apache2-utils se não estiver disponível
+                        echo "📦 htpasswd não encontrado, instalando apache2-utils..."
+                        sh "apt-get update && apt-get install -y apache2-utils"
+                        
+                        // Tenta gerar o hash novamente
+                        def hashResult = sh(
+                            script: "htpasswd -nbB admin '${env.ADMIN_PASSWORD}' | cut -d ':' -f 2",
+                            returnStatus: true
+                        )
+                        
+                        if (hashResult == 0) {
+                            passwordHash = sh(
+                                script: "htpasswd -nbB admin '${env.ADMIN_PASSWORD}' | cut -d ':' -f 2",
+                                returnStdout: true
+                            ).trim()
+                            echo "✅ Hash gerado após instalação do apache2-utils"
+                        } else {
+                            // Fallback: usa Python para gerar hash bcrypt
+                            echo "⚠️  htpasswd falhou, usando Python para gerar hash..."
+                            passwordHash = sh(
+                                script: "python3 -c \"import bcrypt; import sys; print(bcrypt.hashpw('${env.ADMIN_PASSWORD}'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8'))\"",
+                                returnStdout: true
+                            ).trim()
+                                                    echo "✅ Hash gerado usando Python bcrypt"
+                    }
+                    
+                    // Verifica se o hash foi gerado corretamente
+                    if (!passwordHash || passwordHash.isEmpty()) {
+                        error "❌ Erro: Não foi possível gerar o hash da senha!"
+                    }
+                    
+                    echo "✅ Hash da senha gerado com sucesso: ${passwordHash.take(20)}..."
+                    }
                     
                     // Cria arquivo .env com as variáveis
                     def traefikSubdomain = env.TRAEFIK_SUBDOMAIN
@@ -166,6 +210,18 @@ EOF
                     """
                     
                     echo "✅ Arquivo .env criado com as variáveis de ambiente!"
+                    
+                    // Verifica se o arquivo .env foi criado corretamente
+                    def envFileExists = sh(
+                        script: "cd docker && test -f .env",
+                        returnStatus: true
+                    ) == 0
+                    
+                    if (!envFileExists) {
+                        error "❌ Erro: Arquivo .env não foi criado corretamente!"
+                    }
+                    
+                    echo "✅ Arquivo .env verificado e existe!"
                     
                     // Lista todos os arquivos docker-compose existentes
                     sh '''
