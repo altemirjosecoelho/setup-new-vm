@@ -18,7 +18,7 @@ pipeline {
                     echo "=== VERIFICANDO VARIÁVEIS DE AMBIENTE ==="
                     
                     // Verifica se as variáveis obrigatórias estão definidas
-                    def requiredVars = ['TRAEFIK_SUBDOMAIN', 'DEFAULT_DOMAIN', 'PORTAINER_SUBDOMAIN', 'ADMIN_PASSWORD', 'REPO_SETUP_NEW_VM']
+                    def requiredVars = ['TRAEFIK_SUBDOMAIN', 'DEFAULT_DOMAIN', 'PORTAINER_SUBDOMAIN', 'ADMIN_PASSWORD']
                     def missingVars = []
                     
                     requiredVars.each { var ->
@@ -56,57 +56,46 @@ pipeline {
             }
         }
         
-        stage('Clonar Repositório e Executar Docker Compose') {
+        stage('Verificar Repositório e Executar Docker Compose') {
             steps {
                 script {
-                    echo "Clonando repositório e executando Docker Compose..."
+                    echo "Verificando repositório e executando Docker Compose..."
                     
-                    // Verifica se REPO_SETUP_NEW_VM está configurada
-                    if (!env.REPO_SETUP_NEW_VM) {
-                        error "❌ Variável REPO_SETUP_NEW_VM não configurada! Configure a URL do repositório no Jenkins."
-                    }
-                    
-                    echo "📦 Clonando repositório: ${env.REPO_SETUP_NEW_VM}"
-                    
-                    // Remove diretório se existir e clona o repositório
+                    // Verifica se estamos no workspace correto
                     sh '''
-                        rm -rf /tmp/setup-new-vm
-                        cd /tmp
-                        git clone ${REPO_SETUP_NEW_VM} setup-new-vm
-                        cd setup-new-vm
-                    '''
-                    
-                    // Cria pasta docker dentro do repositório
-                    sh '''
-                        mkdir -p docker
-                        echo "✅ Pasta docker criada em setup-new-vm/"
-                    '''
-                    
-                    // Lista a estrutura do repositório
-                    sh '''
-                        echo "=== ESTRUTURA DO REPOSITÓRIO ==="
+                        echo "📁 Workspace atual: $(pwd)"
+                        echo "=== ESTRUTURA DO WORKSPACE ==="
                         ls -la
                         echo "================================"
                     '''
                     
-                    // Acessa a pasta docker e executa docker compose
+                    // Verifica se a pasta docker existe
                     sh '''
-                        cd setup-new-vm/docker
-                        echo "📁 Acessando pasta: $(pwd)"
-                        echo "=== CONTEÚDO DA PASTA DOCKER ==="
-                        ls -la
-                        echo "================================"
+                        if [ -d "docker" ]; then
+                            echo "✅ Pasta docker encontrada!"
+                            cd docker
+                            echo "📁 Acessando pasta: $(pwd)"
+                            echo "=== CONTEÚDO DA PASTA DOCKER ==="
+                            ls -la
+                            echo "================================"
+                        else
+                            echo "❌ Pasta docker não encontrada!"
+                            echo "Criando pasta docker..."
+                            mkdir -p docker
+                            cd docker
+                            echo "✅ Pasta docker criada!"
+                        fi
                     '''
                     
                     echo "🚀 Executando docker compose up traefik..."
                     sh '''
-                        cd /tmp/setup-new-vm/docker
+                        cd docker
                         docker compose -f docker-compose.traefik.yml --env-file .env up -d
                     '''
                     
                     echo "🚀 Executando docker compose up portainer..."
                     sh '''
-                        cd /tmp/setup-new-vm/docker
+                        cd docker
                         docker compose -f docker-compose.portainer.yml --env-file .env up -d
                     '''
                     
@@ -156,7 +145,7 @@ pipeline {
                     
                     // Cria arquivo .env com as variáveis
                     sh """
-                        cd /tmp/setup-new-vm/docker
+                        cd docker
                         cat > .env << 'EOF'
 TRAEFIK_SUBDOMAIN=${env.TRAEFIK_SUBDOMAIN}
 DEFAULT_DOMAIN=${env.DEFAULT_DOMAIN}
@@ -171,7 +160,7 @@ EOF
                     
                     // Lista todos os arquivos docker-compose existentes
                     sh '''
-                        cd /tmp/setup-new-vm/docker
+                        cd docker
                         echo "=== ARQUIVOS DOCKER COMPOSE ENCONTRADOS ==="
                         ls -la docker-compose*.yml
                         echo "=========================================="
@@ -202,7 +191,7 @@ EOF
                     
                     // Cria diretórios necessários se não existirem
                     sh '''
-                        cd /tmp/setup-new-vm/docker
+                        cd docker
                         mkdir -p traefik/config traefik/certificates portainer/data
                         echo "✅ Diretórios criados/verificados!"
                     '''
