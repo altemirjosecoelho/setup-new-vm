@@ -1,0 +1,271 @@
+pipeline {
+    agent {
+        label 'jenkins-testes'
+    }
+    
+    environment {
+        // Variáveis de ambiente que devem ser configuradas no Jenkins
+        // TRAEFIK_SUBDOMAIN=traefik
+        // DEFAULT_DOMAIN=exemplo.com
+        // PORTAINER_SUBDOMAIN=portainer
+        // TRAEFIK_NETWORK=traefik_network
+    }
+    
+    stages {
+        stage('Verificar Variáveis de Ambiente') {
+            steps {
+                script {
+                    echo "=== VERIFICANDO VARIÁVEIS DE AMBIENTE ==="
+                    
+                    // Verifica se as variáveis obrigatórias estão definidas
+                    def requiredVars = ['TRAEFIK_SUBDOMAIN', 'DEFAULT_DOMAIN', 'PORTAINER_SUBDOMAIN', 'ADMIN_PASSWORD']
+                    def missingVars = []
+                    
+                    requiredVars.each { var ->
+                        if (!env[var]) {
+                            missingVars.add(var)
+                        } else {
+                            if (var == 'ADMIN_PASSWORD') {
+                                echo "✅ ${var}: [CONFIGURADA]"
+                            } else {
+                                echo "✅ ${var}: ${env[var]}"
+                            }
+                        }
+                    }
+                    
+                    if (missingVars.size() > 0) {
+                        error "❌ Variáveis obrigatórias não configuradas: ${missingVars.join(', ')}"
+                    }
+                    
+                    // Define a network padrão se não estiver configurada
+                    if (!env.TRAEFIK_NETWORK) {
+                        env.TRAEFIK_NETWORK = 'traefik_network'
+                        echo "ℹ️  TRAEFIK_NETWORK não configurada, usando padrão: ${env.TRAEFIK_NETWORK}"
+                    } else {
+                        echo "✅ TRAEFIK_NETWORK: ${env.TRAEFIK_NETWORK}"
+                    }
+                    
+                    // Exibe as URLs que serão configuradas
+                    echo ""
+                    echo "=== URLs que serão configuradas ==="
+                    echo "🌐 Traefik: https://${env.TRAEFIK_SUBDOMAIN}.${env.DEFAULT_DOMAIN}"
+                    echo "🐳 Portainer: https://${env.PORTAINER_SUBDOMAIN}.${env.DEFAULT_DOMAIN}"
+                    echo "🌐 Network: ${env.TRAEFIK_NETWORK}"
+                    echo "====================================="
+                }
+            }
+        }
+        
+        stage('Criar Network Docker') {
+            steps {
+                script {
+                    echo "Criando network Docker para Traefik..."
+                    
+                    // Verifica se a network já existe
+                    def networkExists = sh(
+                        script: "docker network ls --format '{{.Name}}' | grep -w '${env.TRAEFIK_NETWORK}'",
+                        returnStatus: true
+                    ) == 0
+                    
+                    if (!networkExists) {
+                        sh "docker network create ${env.TRAEFIK_NETWORK}"
+                        echo "✅ Network ${env.TRAEFIK_NETWORK} criada com sucesso!"
+                    } else {
+                        echo "ℹ️  Network ${env.TRAEFIK_NETWORK} já existe!"
+                    }
+                }
+            }
+        }
+        
+        stage('Configurar Traefik') {
+            steps {
+                script {
+                    echo "Configurando Traefik..."
+                    
+                    // Verifica se ADMIN_PASSWORD está configurada
+                    if (!env.ADMIN_PASSWORD) {
+                        error "❌ Variável ADMIN_PASSWORD não configurada! Configure esta variável no Jenkins."
+                    }
+                    
+                    echo "🔐 Usando senha de administrador configurada..."
+                    
+                    // Gera hash bcrypt da senha
+                    def passwordHash = sh(
+                        script: "htpasswd -nbB admin '${env.ADMIN_PASSWORD}' | cut -d ':' -f 2",
+                        returnStdout: true
+                    ).trim()
+                    
+                    echo "✅ Hash da senha gerado com sucesso!"
+                    
+                    // Cria diretório para configurações do Traefik
+                    sh '''
+                        mkdir -p /opt/traefik/config
+                        mkdir -p /opt/traefik/certificates
+                    '''
+                    
+                    // Cria arquivo de configuração do Traefik
+                    sh """
+                        cat > /opt/traefik/config/traefik.yml << 'EOF'
+api:
+  dashboard: true
+  insecure: false
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entrypoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: "${env.TRAEFIK_NETWORK}"
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: ${env.DEFAULT_EMAIL ?: 'admin@' + env.DEFAULT_DOMAIN}
+      storage: /certificates/acme.json
+      httpChallenge:
+        entryPoint: web
+
+log:
+  level: INFO
+
+accessLog: {}
+EOF
+                    """
+                    
+                    // Para e remove container Traefik se existir
+                    sh '''
+                        docker stop traefik 2>/dev/null || true
+                        docker rm traefik 2>/dev/null || true
+                    '''
+                    
+                    // Inicia o container Traefik
+                    sh """
+                        docker run -d \\
+                          --name traefik \\
+                          --network ${env.TRAEFIK_NETWORK} \\
+                          --restart unless-stopped \\
+                          -p 80:80 \\
+                          -p 443:443 \\
+                          -v /var/run/docker.sock:/var/run/docker.sock:ro \\
+                          -v /opt/traefik/config:/etc/traefik \\
+                          -v /opt/traefik/certificates:/certificates \\
+                          -l traefik.enable=true \\
+                          -l traefik.http.routers.traefik.rule=Host(\`${env.TRAEFIK_SUBDOMAIN}.${env.DEFAULT_DOMAIN}\`) \\
+                          -l traefik.http.routers.traefik.entrypoints=websecure \\
+                          -l traefik.http.routers.traefik.tls.certresolver=letsencrypt \\
+                          -l traefik.http.routers.traefik.service=api@internal \\
+                          -l traefik.http.routers.traefik.middlewares=auth \\
+                          -l traefik.http.middlewares.auth.basicauth.users=admin:${passwordHash} \\
+                          traefik:v2.10
+                    """
+                    
+                    echo "✅ Traefik configurado e iniciado!"
+                    echo "🔐 Dashboard: https://${env.TRAEFIK_SUBDOMAIN}.${env.DEFAULT_DOMAIN}"
+                    echo "👤 Usuário: admin"
+                    echo "🔑 Senha: [configurada via ADMIN_PASSWORD]"
+                }
+            }
+        }
+        
+        stage('Configurar Portainer') {
+            steps {
+                script {
+                    echo "Configurando Portainer..."
+                    
+                    // Cria diretório para dados do Portainer
+                    sh '''
+                        mkdir -p /opt/portainer/data
+                    '''
+                    
+                    // Para e remove container Portainer se existir
+                    sh '''
+                        docker stop portainer 2>/dev/null || true
+                        docker rm portainer 2>/dev/null || true
+                    '''
+                    
+                    // Inicia o container Portainer
+                    sh """
+                        docker run -d \\
+                          --name portainer \\
+                          --network ${env.TRAEFIK_NETWORK} \\
+                          --restart unless-stopped \\
+                          -v /var/run/docker.sock:/var/run/docker.sock \\
+                          -v /opt/portainer/data:/data \\
+                          -l traefik.enable=true \\
+                          -l traefik.http.routers.portainer.rule=Host(\`${env.PORTAINER_SUBDOMAIN}.${env.DEFAULT_DOMAIN}\`) \\
+                          -l traefik.http.routers.portainer.entrypoints=websecure \\
+                          -l traefik.http.routers.portainer.tls.certresolver=letsencrypt \\
+                          -l traefik.http.services.portainer.loadbalancer.server.port=9000 \\
+                          portainer/portainer-ce:latest
+                    """
+                    
+                    echo "✅ Portainer configurado e iniciado!"
+                    echo "🐳 Dashboard: https://${env.PORTAINER_SUBDOMAIN}.${env.DEFAULT_DOMAIN}"
+                }
+            }
+        }
+        
+        stage('Verificar Status dos Containers') {
+            steps {
+                script {
+                    echo "Verificando status dos containers..."
+                    
+                    sh '''
+                        echo "=== STATUS DOS CONTAINERS ==="
+                        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+                        echo ""
+                        echo "=== LOGS DO TRAEFIK ==="
+                        docker logs --tail 10 traefik
+                        echo ""
+                        echo "=== LOGS DO PORTAINER ==="
+                        docker logs --tail 10 portainer
+                        echo ""
+                        echo "=== NETWORKS ==="
+                        docker network ls
+                        echo ""
+                        echo "=== VOLUMES ==="
+                        docker volume ls
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                echo "Pipeline de configuração do Traefik e Portainer concluído!"
+            }
+        }
+        success {
+            script {
+                echo "✅ Traefik e Portainer configurados com sucesso!"
+                echo ""
+                echo "=== RESUMO DA CONFIGURAÇÃO ==="
+                echo "🌐 Traefik Dashboard: https://${env.TRAEFIK_SUBDOMAIN}.${env.DEFAULT_DOMAIN}"
+                echo "👤 Usuário Traefik: admin"
+                echo "🔑 Senha Traefik: [configurada via ADMIN_PASSWORD]"
+                echo ""
+                echo "🐳 Portainer Dashboard: https://${env.PORTAINER_SUBDOMAIN}.${env.DEFAULT_DOMAIN}"
+                echo "🌐 Network: ${env.TRAEFIK_NETWORK}"
+                echo "================================"
+            }
+        }
+        failure {
+            script {
+                echo "❌ Erro durante a configuração do Traefik e Portainer!"
+                echo "Verifique os logs acima para mais detalhes."
+            }
+        }
+    }
+} 

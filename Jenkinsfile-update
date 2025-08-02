@@ -220,6 +220,14 @@ pipeline {
                     if (env.DB_PASSWORD) {
                         echo "🗄️  Senha do banco de dados: ${env.DB_PASSWORD}"
                     }
+
+                    if (env.DEFAULT_EMAIL) {
+                        echo "🗄️  E-mail padrão: ${env.DEFAULT_EMAIL}"
+                    }
+
+                     if (env.DEFAULT_USER) {
+                        echo "🗄️  Usuário padrão: ${env.DEFAULT_USER}"
+                    }
                     
                     echo "=== FIM DA SENHA DE TESTE ==="
                 }
