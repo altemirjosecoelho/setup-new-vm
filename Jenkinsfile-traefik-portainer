@@ -3,13 +3,13 @@ pipeline {
         label 'jenkins-testes'
     }
     
-    environment {
-        // Variáveis de ambiente que devem ser configuradas no Jenkins
-        // TRAEFIK_SUBDOMAIN=traefik
-        // DEFAULT_DOMAIN=exemplo.com
-        // PORTAINER_SUBDOMAIN=portainer
-        // TRAEFIK_NETWORK=traefik_network
-    }
+    // Variáveis de ambiente devem ser configuradas no Jenkins:
+    // TRAEFIK_SUBDOMAIN=traefik
+    // DEFAULT_DOMAIN=exemplo.com
+    // PORTAINER_SUBDOMAIN=portainer
+    // TRAEFIK_NETWORK=traefik_network
+    // ADMIN_PASSWORD=MinhaSenhaSegura123
+    // REPO_SETUP_NEW_VM=https://github.com/altemirjosecoelho/setup-new-vm
     
     stages {
         stage('Verificar Variáveis de Ambiente') {
