@@ -3,13 +3,21 @@ pipeline {
         label 'jenkins-testes'
     }
     
+    options {
+        // Timeout para evitar builds infinitos
+        timeout(time: 30, unit: 'MINUTES')
+        // Desabilitar builds concorrentes
+        disableConcurrentBuilds()
+        // Manter apenas os últimos 5 builds
+        buildDiscarder(logRotator(numToKeepStr: '5'))
+    }
+    
     // Variáveis de ambiente devem ser configuradas no Jenkins:
     // TRAEFIK_SUBDOMAIN=traefik
     // DEFAULT_DOMAIN=exemplo.com
     // PORTAINER_SUBDOMAIN=portainer
     // TRAEFIK_NETWORK=traefik_network
     // ADMIN_PASSWORD=MinhaSenhaSegura123
-    // REPO_SETUP_NEW_VM=https://github.com/altemirjosecoelho/setup-new-vm
     
     stages {
         stage('Verificar Variáveis de Ambiente') {
@@ -18,19 +26,34 @@ pipeline {
                     echo "=== VERIFICANDO VARIÁVEIS DE AMBIENTE ==="
                     
                     // Verifica se as variáveis obrigatórias estão definidas
-                    def requiredVars = ['TRAEFIK_SUBDOMAIN', 'DEFAULT_DOMAIN', 'PORTAINER_SUBDOMAIN', 'ADMIN_PASSWORD']
                     def missingVars = []
                     
-                    requiredVars.each { var ->
-                        if (!env[var]) {
-                            missingVars.add(var)
-                        } else {
-                            if (var == 'ADMIN_PASSWORD') {
-                                echo "✅ ${var}: [CONFIGURADA]"
-                            } else {
-                                echo "✅ ${var}: ${env[var]}"
-                            }
-                        }
+                    // Verifica TRAEFIK_SUBDOMAIN
+                    if (!env.TRAEFIK_SUBDOMAIN) {
+                        missingVars.add('TRAEFIK_SUBDOMAIN')
+                    } else {
+                        echo "✅ TRAEFIK_SUBDOMAIN: ${env.TRAEFIK_SUBDOMAIN}"
+                    }
+                    
+                    // Verifica DEFAULT_DOMAIN
+                    if (!env.DEFAULT_DOMAIN) {
+                        missingVars.add('DEFAULT_DOMAIN')
+                    } else {
+                        echo "✅ DEFAULT_DOMAIN: ${env.DEFAULT_DOMAIN}"
+                    }
+                    
+                    // Verifica PORTAINER_SUBDOMAIN
+                    if (!env.PORTAINER_SUBDOMAIN) {
+                        missingVars.add('PORTAINER_SUBDOMAIN')
+                    } else {
+                        echo "✅ PORTAINER_SUBDOMAIN: ${env.PORTAINER_SUBDOMAIN}"
+                    }
+                    
+                    // Verifica ADMIN_PASSWORD
+                    if (!env.ADMIN_PASSWORD) {
+                        missingVars.add('ADMIN_PASSWORD')
+                    } else {
+                        echo "✅ ADMIN_PASSWORD: [CONFIGURADA]"
                     }
                     
                     if (missingVars.size() > 0) {
@@ -40,7 +63,7 @@ pipeline {
                     // Define a network padrão se não estiver configurada
                     if (!env.TRAEFIK_NETWORK) {
                         env.TRAEFIK_NETWORK = 'traefik_network'
-                        echo "ℹ️  TRAEFIK_NETWORK não configurada, usando padrão: ${env.TRAEFIK_NETWORK}"
+                        echo "ℹ️  TRAEFIK_NETWORK não configurada, usando padrão: traefik_network"
                     } else {
                         echo "✅ TRAEFIK_NETWORK: ${env.TRAEFIK_NETWORK}"
                     }
@@ -117,16 +140,17 @@ pipeline {
                     echo "Criando network Docker para Traefik..."
                     
                     // Verifica se a network já existe
+                    def networkName = env.TRAEFIK_NETWORK ?: 'traefik_network'
                     def networkExists = sh(
-                        script: "docker network ls --format '{{.Name}}' | grep -w '${env.TRAEFIK_NETWORK}'",
+                        script: "docker network ls --format '{{.Name}}' | grep -w '${networkName}'",
                         returnStatus: true
                     ) == 0
                     
                     if (!networkExists) {
-                        sh "docker network create ${env.TRAEFIK_NETWORK}"
-                        echo "✅ Network ${env.TRAEFIK_NETWORK} criada com sucesso!"
+                        sh "docker network create ${networkName}"
+                        echo "✅ Network ${networkName} criada com sucesso!"
                     } else {
-                        echo "ℹ️  Network ${env.TRAEFIK_NETWORK} já existe!"
+                        echo "ℹ️  Network ${networkName} já existe!"
                     }
                 }
             }
@@ -144,15 +168,21 @@ pipeline {
                     ).trim()
                     
                     // Cria arquivo .env com as variáveis
+                    def traefikSubdomain = env.TRAEFIK_SUBDOMAIN
+                    def defaultDomain = env.DEFAULT_DOMAIN
+                    def portainerSubdomain = env.PORTAINER_SUBDOMAIN
+                    def traefikNetwork = env.TRAEFIK_NETWORK ?: 'traefik_network'
+                    def defaultEmail = env.DEFAULT_EMAIL ?: "admin@${env.DEFAULT_DOMAIN}"
+                    
                     sh """
                         cd docker
                         cat > .env << 'EOF'
-TRAEFIK_SUBDOMAIN=${env.TRAEFIK_SUBDOMAIN}
-DEFAULT_DOMAIN=${env.DEFAULT_DOMAIN}
-PORTAINER_SUBDOMAIN=${env.PORTAINER_SUBDOMAIN}
+TRAEFIK_SUBDOMAIN=${traefikSubdomain}
+DEFAULT_DOMAIN=${defaultDomain}
+PORTAINER_SUBDOMAIN=${portainerSubdomain}
 ADMIN_PASSWORD_HASH=${passwordHash}
-TRAEFIK_NETWORK=${env.TRAEFIK_NETWORK}
-DEFAULT_EMAIL=${env.DEFAULT_EMAIL ?: 'admin@' + env.DEFAULT_DOMAIN}
+TRAEFIK_NETWORK=${traefikNetwork}
+DEFAULT_EMAIL=${defaultEmail}
 EOF
                     """
                     
@@ -229,19 +259,30 @@ EOF
         always {
             script {
                 echo "Pipeline de configuração do Traefik e Portainer concluído!"
+                
+                // Limpeza de arquivos temporários
+                sh '''
+                    echo "🧹 Limpando arquivos temporários..."
+                    rm -f /tmp/*.tmp 2>/dev/null || true
+                '''
             }
         }
         success {
             script {
+                def traefikSubdomain = env.TRAEFIK_SUBDOMAIN ?: 'traefik'
+                def defaultDomain = env.DEFAULT_DOMAIN ?: 'exemplo.com'
+                def portainerSubdomain = env.PORTAINER_SUBDOMAIN ?: 'portainer'
+                def traefikNetwork = env.TRAEFIK_NETWORK ?: 'traefik_network'
+                
                 echo "✅ Traefik e Portainer configurados com sucesso!"
                 echo ""
                 echo "=== RESUMO DA CONFIGURAÇÃO ==="
-                echo "🌐 Traefik Dashboard: https://${env.TRAEFIK_SUBDOMAIN}.${env.DEFAULT_DOMAIN}"
+                echo "🌐 Traefik Dashboard: https://${traefikSubdomain}.${defaultDomain}"
                 echo "👤 Usuário Traefik: admin"
                 echo "🔑 Senha Traefik: [configurada via ADMIN_PASSWORD]"
                 echo ""
-                echo "🐳 Portainer Dashboard: https://${env.PORTAINER_SUBDOMAIN}.${env.DEFAULT_DOMAIN}"
-                echo "🌐 Network: ${env.TRAEFIK_NETWORK}"
+                echo "🐳 Portainer Dashboard: https://${portainerSubdomain}.${defaultDomain}"
+                echo "🌐 Network: ${traefikNetwork}"
                 echo "================================"
             }
         }
@@ -249,6 +290,26 @@ EOF
             script {
                 echo "❌ Erro durante a configuração do Traefik e Portainer!"
                 echo "Verifique os logs acima para mais detalhes."
+                
+                // Informações de debug em caso de falha
+                sh '''
+                    echo "=== DEBUG INFO ==="
+                    echo "Docker status:"
+                    docker ps -a 2>/dev/null || echo "Docker não disponível"
+                    echo ""
+                    echo "Network status:"
+                    docker network ls 2>/dev/null || echo "Docker não disponível"
+                    echo "=================="
+                '''
+            }
+        }
+        cleanup {
+            script {
+                echo "🧹 Executando limpeza final..."
+                // Garantir que não deixamos arquivos temporários
+                sh '''
+                    find /tmp -name "*.tmp" -delete 2>/dev/null || true
+                '''
             }
         }
     }
