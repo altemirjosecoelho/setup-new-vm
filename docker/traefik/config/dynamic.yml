@@ -1,0 +1,53 @@
+# Configurações dinâmicas do Traefik
+# Este arquivo pode ser modificado sem reiniciar o Traefik
+
+http:
+  middlewares:
+    # Middleware para compressão
+    compress:
+      compress: {}
+    
+    # Middleware para rate limiting
+    rate-limit:
+      rateLimit:
+        burst: 100
+        average: 50
+    
+    # Middleware para CORS
+    cors:
+      headers:
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        accessControlAllowHeaders:
+          - Authorization
+          - Content-Type
+        accessControlAllowOriginList:
+          - "*"
+        accessControlMaxAge: 86400
+        addVaryHeader: true
+
+  routers:
+    # Router padrão para redirecionamento
+    default-redirect:
+      rule: "HostRegexp(`{host:.+}`)"
+      service: noop
+      priority: 1
+      middlewares:
+        - redirect-to-https
+
+  services:
+    noop:
+      loadBalancer:
+        servers:
+          - url: "http://localhost"
+
+  middlewares:
+    redirect-to-https:
+      redirectRegex:
+        permanent: true
+        regex: "^http://(.*)"
+        replacement: "https://$1" 

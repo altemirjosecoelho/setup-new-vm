@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/config:/etc/traefik
+      - ./traefik/certificates:/certificates
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.traefik.rule=Host('${TRAEFIK_SUBDOMAIN}.${DEFAULT_DOMAIN}')
+      - traefik.http.routers.traefik.entrypoints=websecure
+      - traefik.http.routers.traefik.tls.certresolver=letsencrypt
+      - traefik.http.routers.traefik.service=api@internal
+      - traefik.http.routers.traefik.middlewares=auth
+      - traefik.http.middlewares.auth.basicauth.users=admin:${ADMIN_PASSWORD_HASH}
+    networks:
+      - ${TRAEFIK_NETWORK}
+    environment:
+      - TRAEFIK_SUBDOMAIN=${TRAEFIK_SUBDOMAIN}
+      - DEFAULT_DOMAIN=${DEFAULT_DOMAIN}
+      - DEFAULT_EMAIL=${DEFAULT_EMAIL}
+
+networks:
+  ${TRAEFIK_NETWORK}:
+    external: true

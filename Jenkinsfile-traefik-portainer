@@ -18,7 +18,7 @@ pipeline {
                     echo "=== VERIFICANDO VARIÁVEIS DE AMBIENTE ==="
                     
                     // Verifica se as variáveis obrigatórias estão definidas
-                    def requiredVars = ['TRAEFIK_SUBDOMAIN', 'DEFAULT_DOMAIN', 'PORTAINER_SUBDOMAIN', 'ADMIN_PASSWORD']
+                    def requiredVars = ['TRAEFIK_SUBDOMAIN', 'DEFAULT_DOMAIN', 'PORTAINER_SUBDOMAIN', 'ADMIN_PASSWORD', 'REPO_SETUP_NEW_VM']
                     def missingVars = []
                     
                     requiredVars.each { var ->
@@ -56,6 +56,72 @@ pipeline {
             }
         }
         
+        stage('Clonar Repositório e Executar Docker Compose') {
+            steps {
+                script {
+                    echo "Clonando repositório e executando Docker Compose..."
+                    
+                    // Verifica se REPO_SETUP_NEW_VM está configurada
+                    if (!env.REPO_SETUP_NEW_VM) {
+                        error "❌ Variável REPO_SETUP_NEW_VM não configurada! Configure a URL do repositório no Jenkins."
+                    }
+                    
+                    echo "📦 Clonando repositório: ${env.REPO_SETUP_NEW_VM}"
+                    
+                    // Remove diretório se existir e clona o repositório
+                    sh '''
+                        rm -rf /tmp/setup-new-vm
+                        cd /tmp
+                        git clone ${REPO_SETUP_NEW_VM} setup-new-vm
+                        cd setup-new-vm
+                    '''
+                    
+                    // Cria pasta docker dentro do repositório
+                    sh '''
+                        mkdir -p docker
+                        echo "✅ Pasta docker criada em setup-new-vm/"
+                    '''
+                    
+                    // Lista a estrutura do repositório
+                    sh '''
+                        echo "=== ESTRUTURA DO REPOSITÓRIO ==="
+                        ls -la
+                        echo "================================"
+                    '''
+                    
+                    // Acessa a pasta docker e executa docker compose
+                    sh '''
+                        cd setup-new-vm/docker
+                        echo "📁 Acessando pasta: $(pwd)"
+                        echo "=== CONTEÚDO DA PASTA DOCKER ==="
+                        ls -la
+                        echo "================================"
+                    '''
+                    
+                    echo "🚀 Executando docker compose up traefik..."
+                    sh '''
+                        cd /tmp/setup-new-vm/docker
+                        docker compose -f docker-compose.traefik.yml --env-file .env up -d
+                    '''
+                    
+                    echo "🚀 Executando docker compose up portainer..."
+                    sh '''
+                        cd /tmp/setup-new-vm/docker
+                        docker compose -f docker-compose.portainer.yml --env-file .env up -d
+                    '''
+                    
+                    echo "✅ Docker Compose executado com sucesso!"
+                    
+                    // Verifica status dos containers
+                    sh '''
+                        echo "=== STATUS DOS CONTAINERS ==="
+                        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+                        echo "============================="
+                    '''
+                }
+            }
+        }
+        
         stage('Criar Network Docker') {
             steps {
                 script {
@@ -77,140 +143,69 @@ pipeline {
             }
         }
         
-        stage('Configurar Traefik') {
+        stage('Verificar e Configurar Docker Compose') {
             steps {
                 script {
-                    echo "Configurando Traefik..."
+                    echo "Verificando arquivos Docker Compose existentes..."
                     
-                    // Verifica se ADMIN_PASSWORD está configurada
-                    if (!env.ADMIN_PASSWORD) {
-                        error "❌ Variável ADMIN_PASSWORD não configurada! Configure esta variável no Jenkins."
-                    }
-                    
-                    echo "🔐 Usando senha de administrador configurada..."
-                    
-                    // Gera hash bcrypt da senha
+                    // Gera hash da senha para o Traefik
                     def passwordHash = sh(
                         script: "htpasswd -nbB admin '${env.ADMIN_PASSWORD}' | cut -d ':' -f 2",
                         returnStdout: true
                     ).trim()
                     
-                    echo "✅ Hash da senha gerado com sucesso!"
-                    
-                    // Cria diretório para configurações do Traefik
-                    sh '''
-                        mkdir -p /opt/traefik/config
-                        mkdir -p /opt/traefik/certificates
-                    '''
-                    
-                    // Cria arquivo de configuração do Traefik
+                    // Cria arquivo .env com as variáveis
                     sh """
-                        cat > /opt/traefik/config/traefik.yml << 'EOF'
-api:
-  dashboard: true
-  insecure: false
-
-entryPoints:
-  web:
-    address: ":80"
-    http:
-      redirections:
-        entrypoint:
-          to: websecure
-          scheme: https
-  websecure:
-    address: ":443"
-
-providers:
-  docker:
-    endpoint: "unix:///var/run/docker.sock"
-    exposedByDefault: false
-    network: "${env.TRAEFIK_NETWORK}"
-
-certificatesResolvers:
-  letsencrypt:
-    acme:
-      email: ${env.DEFAULT_EMAIL ?: 'admin@' + env.DEFAULT_DOMAIN}
-      storage: /certificates/acme.json
-      httpChallenge:
-        entryPoint: web
-
-log:
-  level: INFO
-
-accessLog: {}
+                        cd /tmp/setup-new-vm/docker
+                        cat > .env << 'EOF'
+TRAEFIK_SUBDOMAIN=${env.TRAEFIK_SUBDOMAIN}
+DEFAULT_DOMAIN=${env.DEFAULT_DOMAIN}
+PORTAINER_SUBDOMAIN=${env.PORTAINER_SUBDOMAIN}
+ADMIN_PASSWORD_HASH=${passwordHash}
+TRAEFIK_NETWORK=${env.TRAEFIK_NETWORK}
+DEFAULT_EMAIL=${env.DEFAULT_EMAIL ?: 'admin@' + env.DEFAULT_DOMAIN}
 EOF
                     """
                     
-                    // Para e remove container Traefik se existir
+                    echo "✅ Arquivo .env criado com as variáveis de ambiente!"
+                    
+                    // Lista todos os arquivos docker-compose existentes
                     sh '''
-                        docker stop traefik 2>/dev/null || true
-                        docker rm traefik 2>/dev/null || true
+                        cd /tmp/setup-new-vm/docker
+                        echo "=== ARQUIVOS DOCKER COMPOSE ENCONTRADOS ==="
+                        ls -la docker-compose*.yml
+                        echo "=========================================="
+                        
+                        echo "=== CONTEÚDO DO DOCKER-COMPOSE.TRAEFIK.YML ==="
+                        if [ -f docker-compose.traefik.yml ]; then
+                            cat docker-compose.traefik.yml
+                        else
+                            echo "❌ docker-compose.traefik.yml não encontrado!"
+                        fi
+                        echo "============================================="
+                        
+                        echo "=== CONTEÚDO DO DOCKER-COMPOSE.PORTAINER.YML ==="
+                        if [ -f docker-compose.portainer.yml ]; then
+                            cat docker-compose.portainer.yml
+                        else
+                            echo "❌ docker-compose.portainer.yml não encontrado!"
+                        fi
+                        echo "==============================================="
                     '''
                     
-                    // Inicia o container Traefik
-                    sh """
-                        docker run -d \\
-                          --name traefik \\
-                          --network ${env.TRAEFIK_NETWORK} \\
-                          --restart unless-stopped \\
-                          -p 80:80 \\
-                          -p 443:443 \\
-                          -v /var/run/docker.sock:/var/run/docker.sock:ro \\
-                          -v /opt/traefik/config:/etc/traefik \\
-                          -v /opt/traefik/certificates:/certificates \\
-                          -l traefik.enable=true \\
-                          -l traefik.http.routers.traefik.rule=Host(\`${env.TRAEFIK_SUBDOMAIN}.${env.DEFAULT_DOMAIN}\`) \\
-                          -l traefik.http.routers.traefik.entrypoints=websecure \\
-                          -l traefik.http.routers.traefik.tls.certresolver=letsencrypt \\
-                          -l traefik.http.routers.traefik.service=api@internal \\
-                          -l traefik.http.routers.traefik.middlewares=auth \\
-                          -l traefik.http.middlewares.auth.basicauth.users=admin:${passwordHash} \\
-                          traefik:v2.10
-                    """
-                    
-                    echo "✅ Traefik configurado e iniciado!"
-                    echo "🔐 Dashboard: https://${env.TRAEFIK_SUBDOMAIN}.${env.DEFAULT_DOMAIN}"
-                    echo "👤 Usuário: admin"
-                    echo "🔑 Senha: [configurada via ADMIN_PASSWORD]"
-                }
-            }
-        }
-        
-        stage('Configurar Portainer') {
-            steps {
-                script {
-                    echo "Configurando Portainer..."
-                    
-                    // Cria diretório para dados do Portainer
+                    // Exibe o conteúdo do arquivo .env
                     sh '''
-                        mkdir -p /opt/portainer/data
+                        echo "=== CONTEÚDO DO ARQUIVO .ENV ==="
+                        cat .env
+                        echo "================================"
                     '''
                     
-                    // Para e remove container Portainer se existir
+                    // Cria diretórios necessários se não existirem
                     sh '''
-                        docker stop portainer 2>/dev/null || true
-                        docker rm portainer 2>/dev/null || true
+                        cd /tmp/setup-new-vm/docker
+                        mkdir -p traefik/config traefik/certificates portainer/data
+                        echo "✅ Diretórios criados/verificados!"
                     '''
-                    
-                    // Inicia o container Portainer
-                    sh """
-                        docker run -d \\
-                          --name portainer \\
-                          --network ${env.TRAEFIK_NETWORK} \\
-                          --restart unless-stopped \\
-                          -v /var/run/docker.sock:/var/run/docker.sock \\
-                          -v /opt/portainer/data:/data \\
-                          -l traefik.enable=true \\
-                          -l traefik.http.routers.portainer.rule=Host(\`${env.PORTAINER_SUBDOMAIN}.${env.DEFAULT_DOMAIN}\`) \\
-                          -l traefik.http.routers.portainer.entrypoints=websecure \\
-                          -l traefik.http.routers.portainer.tls.certresolver=letsencrypt \\
-                          -l traefik.http.services.portainer.loadbalancer.server.port=9000 \\
-                          portainer/portainer-ce:latest
-                    """
-                    
-                    echo "✅ Portainer configurado e iniciado!"
-                    echo "🐳 Dashboard: https://${env.PORTAINER_SUBDOMAIN}.${env.DEFAULT_DOMAIN}"
                 }
             }
         }
