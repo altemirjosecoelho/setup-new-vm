@@ -40,18 +40,18 @@ pipeline {
                         'tree'            // Visualizar estrutura de diretórios
                     ]
                     
-                    essentialPackages.each { package ->
+                    essentialPackages.each { pkg ->
                         def isInstalled = sh(
-                            script: "dpkg -l | grep -q '^ii.*${package}'",
+                            script: "dpkg -l | grep -q '^ii.*${pkg}'",
                             returnStatus: true
                         ) == 0
                         
                         if (!isInstalled) {
-                            echo "📦 Instalando ${package}..."
-                            sh "apt-get install -y ${package}"
-                            echo "✅ ${package} instalado com sucesso!"
+                            echo "📦 Instalando ${pkg}..."
+                            sh "apt-get install -y ${pkg}"
+                            echo "✅ ${pkg} instalado com sucesso!"
                         } else {
-                            echo "ℹ️  ${package} já está instalado"
+                            echo "ℹ️  ${pkg} já está instalado"
                         }
                     }
                     
