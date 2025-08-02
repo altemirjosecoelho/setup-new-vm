@@ -79,10 +79,10 @@ pipeline {
             }
         }
         
-        stage('Verificar Repositório e Executar Docker Compose') {
+        stage('Verificar Repositório') {
             steps {
                 script {
-                    echo "Verificando repositório e executando Docker Compose..."
+                    echo "Verificando repositório..."
                     
                     // Verifica se estamos no workspace correto
                     sh '''
@@ -108,27 +108,6 @@ pipeline {
                             cd docker
                             echo "✅ Pasta docker criada!"
                         fi
-                    '''
-                    
-                    echo "🚀 Executando docker compose up traefik..."
-                    sh '''
-                        cd docker
-                        docker compose -f docker-compose.traefik.yml --env-file .env up -d
-                    '''
-                    
-                    echo "🚀 Executando docker compose up portainer..."
-                    sh '''
-                        cd docker
-                        docker compose -f docker-compose.portainer.yml --env-file .env up -d
-                    '''
-                    
-                    echo "✅ Docker Compose executado com sucesso!"
-                    
-                    // Verifica status dos containers
-                    sh '''
-                        echo "=== STATUS DOS CONTAINERS ==="
-                        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-                        echo "============================="
                     '''
                 }
             }
@@ -224,6 +203,35 @@ EOF
                         cd docker
                         mkdir -p traefik/config traefik/certificates portainer/data
                         echo "✅ Diretórios criados/verificados!"
+                    '''
+                }
+            }
+        }
+        
+        stage('Executar Docker Compose') {
+            steps {
+                script {
+                    echo "Executando Docker Compose..."
+                    
+                    echo "🚀 Executando docker compose up traefik..."
+                    sh '''
+                        cd docker
+                        docker compose -f docker-compose.traefik.yml --env-file .env up -d
+                    '''
+                    
+                    echo "🚀 Executando docker compose up portainer..."
+                    sh '''
+                        cd docker
+                        docker compose -f docker-compose.portainer.yml --env-file .env up -d
+                    '''
+                    
+                    echo "✅ Docker Compose executado com sucesso!"
+                    
+                    // Verifica status dos containers
+                    sh '''
+                        echo "=== STATUS DOS CONTAINERS ==="
+                        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+                        echo "============================="
                     '''
                 }
             }
