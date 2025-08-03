@@ -91,14 +91,39 @@ pipeline {
             steps {
                 echo 'Iniciando instalação do K3s...'
                 script {
-                    // Verificar se estamos em um container
-                    def isContainer = sh(
+                    // Verificar se estamos em um container (múltiplas verificações)
+                    def isContainer = false
+                    
+                    // Verificar se estamos em um container Jenkins
+                    def jenkinsContainer = sh(
+                        script: 'echo $JENKINS_URL',
+                        returnStatus: true
+                    ) == 0
+                    
+                    // Verificar se sudo tem limitações
+                    def sudoLimited = sh(
+                        script: 'sudo -u deploy whoami 2>&1 | grep -q "no new privileges"',
+                        returnStatus: true
+                    ) == 0
+                    
+                    // Verificar se estamos em um ambiente containerizado
+                    def dockerContainer = sh(
                         script: 'cat /proc/1/cgroup | grep -q docker',
                         returnStatus: true
                     ) == 0
                     
+                    if (jenkinsContainer || sudoLimited || dockerContainer) {
+                        isContainer = true
+                    }
+                    
+                    echo "Detecção de ambiente:"
+                    echo "  - Jenkins Container: ${jenkinsContainer}"
+                    echo "  - Sudo Limitado: ${sudoLimited}"
+                    echo "  - Docker Container: ${dockerContainer}"
+                    echo "  - Usar instalação direta: ${isContainer}"
+                    
                     if (isContainer) {
-                        echo "⚠️  Detectado ambiente containerizado. Instalando K3s diretamente..."
+                        echo "⚠️  Detectado ambiente com limitações. Instalando K3s diretamente..."
                         
                         // Instalar K3s diretamente sem usar o script que tem sudo
                         echo "Baixando e instalando K3s..."
