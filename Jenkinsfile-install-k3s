@@ -1,0 +1,187 @@
+pipeline {
+    agent any
+    
+    environment {
+        // Definir variáveis de ambiente se necessário
+        K3S_VERSION = 'v1.33.3+k3s1'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                echo 'Fazendo checkout do código...'
+                checkout scm
+            }
+        }
+        
+        stage('Verificar Sistema') {
+            steps {
+                echo 'Verificando requisitos do sistema...'
+                script {
+                    // Verificar se estamos em um sistema Linux
+                    def os = sh(script: 'uname -s', returnStdout: true).trim()
+                    if (os != 'Linux') {
+                        error "Este pipeline é compatível apenas com sistemas Linux. Sistema detectado: ${os}"
+                    }
+                    
+                    // Verificar arquitetura
+                    def arch = sh(script: 'uname -m', returnStdout: true).trim()
+                    echo "Arquitetura detectada: ${arch}"
+                    
+                    // Verificar se estamos rodando como root ou com sudo
+                    def user = sh(script: 'whoami', returnStdout: true).trim()
+                    echo "Usuário atual: ${user}"
+                    
+                    if (user != 'root') {
+                        echo "Aviso: Executando como usuário não-root. Pode ser necessário sudo para algumas operações."
+                    }
+                    
+                    // Verificar se o usuário deploy existe
+                    echo "Verificando se o usuário 'deploy' existe..."
+                    def deployUserExists = sh(
+                        script: 'id deploy',
+                        returnStatus: true
+                    ) == 0
+                    
+                    if (!deployUserExists) {
+                        error "❌ Usuário 'deploy' não encontrado! Execute primeiro: adduser deploy && usermod -aG sudo deploy"
+                    } else {
+                        echo "✅ Usuário 'deploy' encontrado!"
+                        
+                        // Verificar se o usuário deploy está no grupo sudo
+                        def isInSudoGroup = sh(
+                            script: 'groups deploy | grep -q sudo',
+                            returnStatus: true
+                        ) == 0
+                        
+                        if (!isInSudoGroup) {
+                            echo "⚠️  Usuário 'deploy' não está no grupo sudo. Adicionando..."
+                            sh 'usermod -aG sudo deploy'
+                            echo "✅ Usuário 'deploy' adicionado ao grupo sudo!"
+                        } else {
+                            echo "✅ Usuário 'deploy' já possui privilégios de sudo!"
+                        }
+                        
+                        // Verificar se o usuário deploy está no grupo docker (se existir)
+                        def dockerGroupExists = sh(
+                            script: 'getent group docker',
+                            returnStatus: true
+                        ) == 0
+                        
+                        if (dockerGroupExists) {
+                            def isInDockerGroup = sh(
+                                script: 'groups deploy | grep -q docker',
+                                returnStatus: true
+                            ) == 0
+                            
+                            if (!isInDockerGroup) {
+                                echo "🐳 Adicionando usuário 'deploy' ao grupo 'docker'..."
+                                sh 'usermod -aG docker deploy'
+                                echo "✅ Usuário 'deploy' adicionado ao grupo 'docker'!"
+                            } else {
+                                echo "✅ Usuário 'deploy' já está no grupo 'docker'!"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Instalar K3s') {
+            steps {
+                echo 'Iniciando instalação do K3s com usuário deploy...'
+                script {
+                    // Tornar o script executável
+                    sh 'chmod +x scripts/install-k3s-cluster.sh'
+                    
+                    // Executar o script de instalação como usuário deploy
+                    echo "Executando instalação do K3s como usuário 'deploy'..."
+                    sh 'sudo -u deploy ./scripts/install-k3s-cluster.sh'
+                    
+                    echo "✅ Instalação do K3s concluída com usuário 'deploy'!"
+                }
+            }
+        }
+        
+        stage('Verificar Instalação') {
+            steps {
+                echo 'Verificando se o K3s foi instalado corretamente...'
+                script {
+                    // Aguardar um pouco para garantir que tudo está funcionando
+                    sleep 10
+                    
+                    // Verificar se o K3s está rodando
+                    def k3sStatus = sh(script: 'sudo systemctl is-active k3s', returnStdout: true).trim()
+                    if (k3sStatus != 'active') {
+                        error "K3s não está rodando. Status: ${k3sStatus}"
+                    }
+                    
+                    echo "K3s está rodando com status: ${k3sStatus}"
+                    
+                    // Verificar se kubectl está funcionando como usuário deploy
+                    echo "Verificando kubectl como usuário 'deploy'..."
+                    sh 'sudo -u deploy kubectl version --client'
+                    
+                    // Verificar nodes do cluster como usuário deploy
+                    sh 'sudo -u deploy kubectl get nodes'
+                    
+                    // Verificar se o hello world foi deployado como usuário deploy
+                    sh 'sudo -u deploy kubectl get pods -n hello-world'
+                    sh 'sudo -u deploy kubectl get services -n hello-world'
+                }
+            }
+        }
+        
+        stage('Testar Acesso') {
+            steps {
+                echo 'Testando acesso ao hello world...'
+                script {
+                    // Obter IP do node como usuário deploy
+                    def nodeIP = sh(script: 'sudo -u deploy kubectl get nodes -o jsonpath=\'{.items[0].status.addresses[?(@.type=="InternalIP")].address}\'', returnStdout: true).trim()
+                    
+                    if (nodeIP) {
+                        echo "IP do node: ${nodeIP}"
+                        echo "URL de acesso: http://${nodeIP}:30080"
+                        
+                        // Testar conectividade (opcional)
+                        try {
+                            def response = sh(script: "curl -s -o /dev/null -w '%{http_code}' http://${nodeIP}:30080", returnStdout: true).trim()
+                            echo "Resposta do hello world: ${response}"
+                            
+                            if (response == '200') {
+                                echo "✅ Hello world está acessível!"
+                            } else {
+                                echo "⚠️ Hello world pode não estar acessível ainda (código: ${response})"
+                            }
+                        } catch (Exception e) {
+                            echo "⚠️ Não foi possível testar conectividade: ${e.getMessage()}"
+                        }
+                    } else {
+                        echo "⚠️ Não foi possível obter IP do node"
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo 'Pipeline concluído!'
+        }
+        success {
+            echo '✅ Instalação do K3s concluída com sucesso!'
+            echo '📋 Informações úteis:'
+            echo '   - kubectl get nodes'
+            echo '   - kubectl get pods -n hello-world'
+            echo '   - kubectl get services -n hello-world'
+            echo '   - http://<IP_DO_NODE>:30080 (para acessar hello world)'
+        }
+        failure {
+            echo '❌ Falha na instalação do K3s'
+            echo '📋 Para debug:'
+            echo '   - sudo systemctl status k3s'
+            echo '   - sudo journalctl -u k3s.service'
+            echo '   - kubectl get nodes'
+        }
+    }
+} 
