@@ -98,19 +98,55 @@ pipeline {
                     ) == 0
                     
                     if (isContainer) {
-                        echo "⚠️  Detectado ambiente containerizado. Ajustando instalação..."
+                        echo "⚠️  Detectado ambiente containerizado. Instalando K3s diretamente..."
                         
-                        // Tornar o script executável
-                        sh 'chmod +x scripts/install-k3s-cluster.sh'
-                        
-                        // Executar o script diretamente (sem sudo -u deploy)
-                        echo "Executando instalação do K3s no container..."
-                        sh './scripts/install-k3s-cluster.sh'
-                        
-                        // Após a instalação, ajustar permissões para o usuário deploy
-                        echo "Ajustando permissões para o usuário deploy..."
+                        // Instalar K3s diretamente sem usar o script que tem sudo
+                        echo "Baixando e instalando K3s..."
                         sh '''
-                            # Copiar configuração do K3s para o usuário deploy
+                            # Detectar arquitetura
+                            ARCH=$(uname -m)
+                            if [ "$ARCH" = "x86_64" ]; then
+                                ARCH="amd64"
+                            elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+                                ARCH="arm64"
+                            else
+                                echo "❌ Arquitetura não suportada: $ARCH"
+                                exit 1
+                            fi
+                            
+                            echo "Arquitetura detectada: $ARCH"
+                            
+                            # Instalar K3s
+                            curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--docker" sh -
+                            
+                            # Aguardar inicialização
+                            echo "Aguardando K3s inicializar..."
+                            sleep 15
+                            
+                            # Verificar se está rodando
+                            if ps aux | grep -v grep | grep -q k3s; then
+                                echo "✅ K3s está rodando!"
+                            else
+                                echo "❌ K3s não está rodando"
+                                exit 1
+                            fi
+                            
+                            # Configurar permissões
+                            if [ -f /etc/rancher/k3s/k3s.yaml ]; then
+                                chmod 644 /etc/rancher/k3s/k3s.yaml
+                                echo "✅ Configuração do K3s configurada"
+                            fi
+                            
+                            # Criar link simbólico para kubectl
+                            if [ ! -f /usr/local/bin/kubectl ]; then
+                                ln -sf /usr/local/bin/k3s kubectl
+                                echo "✅ Link simbólico kubectl criado"
+                            fi
+                        '''
+                        
+                        // Copiar configuração para o usuário deploy
+                        echo "Configurando acesso para o usuário deploy..."
+                        sh '''
                             if [ -f /etc/rancher/k3s/k3s.yaml ]; then
                                 mkdir -p /home/deploy/.kube
                                 cp /etc/rancher/k3s/k3s.yaml /home/deploy/.kube/config
@@ -119,6 +155,70 @@ pipeline {
                                 echo "✅ Configuração do K3s copiada para /home/deploy/.kube/config"
                             fi
                         '''
+                        
+                        // Deployar hello world
+                        echo "Deployando hello world..."
+                        sh '''
+                            # Aguardar cluster ficar pronto
+                            echo "Aguardando cluster ficar pronto..."
+                            timeout=60
+                            counter=0
+                            while [ $counter -lt $timeout ]; do
+                                if kubectl get nodes 2>/dev/null | grep -q "Ready"; then
+                                    echo "✅ Cluster pronto!"
+                                    break
+                                fi
+                                sleep 2
+                                counter=$((counter + 2))
+                            done
+                            
+                            # Criar namespace
+                            kubectl create namespace hello-world 2>/dev/null || echo "Namespace já existe"
+                            
+                            # Deployar hello world
+                            cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-world
+  namespace: hello-world
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hello-world
+  template:
+    metadata:
+      labels:
+        app: hello-world
+    spec:
+      containers:
+      - name: hello-world
+        image: nginxdemos/hello:latest
+        ports:
+        - containerPort: 80
+EOF
+                            
+                            # Criar service
+                            cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-world-service
+  namespace: hello-world
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30080
+  selector:
+    app: hello-world
+EOF
+                            
+                            echo "✅ Hello world deployado!"
+                        '''
+                        
                     } else {
                         // Tornar o script executável
                         sh 'chmod +x scripts/install-k3s-cluster.sh'
