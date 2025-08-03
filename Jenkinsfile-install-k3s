@@ -89,16 +89,46 @@ pipeline {
         
         stage('Instalar K3s') {
             steps {
-                echo 'Iniciando instalação do K3s com usuário deploy...'
+                echo 'Iniciando instalação do K3s...'
                 script {
-                    // Tornar o script executável
-                    sh 'chmod +x scripts/install-k3s-cluster.sh'
+                    // Verificar se estamos em um container
+                    def isContainer = sh(
+                        script: 'cat /proc/1/cgroup | grep -q docker',
+                        returnStatus: true
+                    ) == 0
                     
-                    // Executar o script de instalação como usuário deploy
-                    echo "Executando instalação do K3s como usuário 'deploy'..."
-                    sh 'sudo -u deploy ./scripts/install-k3s-cluster.sh'
+                    if (isContainer) {
+                        echo "⚠️  Detectado ambiente containerizado. Ajustando instalação..."
+                        
+                        // Tornar o script executável
+                        sh 'chmod +x scripts/install-k3s-cluster.sh'
+                        
+                        // Executar o script diretamente (sem sudo -u deploy)
+                        echo "Executando instalação do K3s no container..."
+                        sh './scripts/install-k3s-cluster.sh'
+                        
+                        // Após a instalação, ajustar permissões para o usuário deploy
+                        echo "Ajustando permissões para o usuário deploy..."
+                        sh '''
+                            # Copiar configuração do K3s para o usuário deploy
+                            if [ -f /etc/rancher/k3s/k3s.yaml ]; then
+                                mkdir -p /home/deploy/.kube
+                                cp /etc/rancher/k3s/k3s.yaml /home/deploy/.kube/config
+                                chown -R deploy:deploy /home/deploy/.kube
+                                chmod 600 /home/deploy/.kube/config
+                                echo "✅ Configuração do K3s copiada para /home/deploy/.kube/config"
+                            fi
+                        '''
+                    } else {
+                        // Tornar o script executável
+                        sh 'chmod +x scripts/install-k3s-cluster.sh'
+                        
+                        // Executar o script de instalação como usuário deploy
+                        echo "Executando instalação do K3s como usuário 'deploy'..."
+                        sh 'sudo -u deploy ./scripts/install-k3s-cluster.sh'
+                    }
                     
-                    echo "✅ Instalação do K3s concluída com usuário 'deploy'!"
+                    echo "✅ Instalação do K3s concluída!"
                 }
             }
         }
@@ -107,27 +137,65 @@ pipeline {
             steps {
                 echo 'Verificando se o K3s foi instalado corretamente...'
                 script {
+                    // Verificar se estamos em um container
+                    def isContainer = sh(
+                        script: 'cat /proc/1/cgroup | grep -q docker',
+                        returnStatus: true
+                    ) == 0
+                    
                     // Aguardar um pouco para garantir que tudo está funcionando
                     sleep 10
                     
-                    // Verificar se o K3s está rodando
-                    def k3sStatus = sh(script: 'sudo systemctl is-active k3s', returnStdout: true).trim()
-                    if (k3sStatus != 'active') {
-                        error "K3s não está rodando. Status: ${k3sStatus}"
+                    if (isContainer) {
+                        echo "Verificando K3s em ambiente containerizado..."
+                        
+                        // Verificar se o K3s está rodando (sem systemctl em container)
+                        def k3sRunning = sh(
+                            script: 'ps aux | grep -v grep | grep -q k3s',
+                            returnStatus: true
+                        ) == 0
+                        
+                        if (!k3sRunning) {
+                            error "K3s não está rodando no container"
+                        }
+                        
+                        echo "✅ K3s está rodando no container"
+                        
+                        // Verificar se kubectl está funcionando
+                        echo "Verificando kubectl..."
+                        sh 'kubectl version --client'
+                        
+                        // Verificar nodes do cluster
+                        sh 'kubectl get nodes'
+                        
+                        // Verificar se o hello world foi deployado
+                        sh 'kubectl get pods -n hello-world'
+                        sh 'kubectl get services -n hello-world'
+                        
+                        // Verificar se o usuário deploy pode acessar
+                        echo "Verificando acesso do usuário deploy..."
+                        sh 'sudo -u deploy kubectl get nodes 2>/dev/null || echo "⚠️ Usuário deploy não consegue acessar kubectl diretamente"'
+                        
+                    } else {
+                        // Verificar se o K3s está rodando
+                        def k3sStatus = sh(script: 'sudo systemctl is-active k3s', returnStdout: true).trim()
+                        if (k3sStatus != 'active') {
+                            error "K3s não está rodando. Status: ${k3sStatus}"
+                        }
+                        
+                        echo "K3s está rodando com status: ${k3sStatus}"
+                        
+                        // Verificar se kubectl está funcionando como usuário deploy
+                        echo "Verificando kubectl como usuário 'deploy'..."
+                        sh 'sudo -u deploy kubectl version --client'
+                        
+                        // Verificar nodes do cluster como usuário deploy
+                        sh 'sudo -u deploy kubectl get nodes'
+                        
+                        // Verificar se o hello world foi deployado como usuário deploy
+                        sh 'sudo -u deploy kubectl get pods -n hello-world'
+                        sh 'sudo -u deploy kubectl get services -n hello-world'
                     }
-                    
-                    echo "K3s está rodando com status: ${k3sStatus}"
-                    
-                    // Verificar se kubectl está funcionando como usuário deploy
-                    echo "Verificando kubectl como usuário 'deploy'..."
-                    sh 'sudo -u deploy kubectl version --client'
-                    
-                    // Verificar nodes do cluster como usuário deploy
-                    sh 'sudo -u deploy kubectl get nodes'
-                    
-                    // Verificar se o hello world foi deployado como usuário deploy
-                    sh 'sudo -u deploy kubectl get pods -n hello-world'
-                    sh 'sudo -u deploy kubectl get services -n hello-world'
                 }
             }
         }
@@ -136,8 +204,19 @@ pipeline {
             steps {
                 echo 'Testando acesso ao hello world...'
                 script {
-                    // Obter IP do node como usuário deploy
-                    def nodeIP = sh(script: 'sudo -u deploy kubectl get nodes -o jsonpath=\'{.items[0].status.addresses[?(@.type=="InternalIP")].address}\'', returnStdout: true).trim()
+                    // Verificar se estamos em um container
+                    def isContainer = sh(
+                        script: 'cat /proc/1/cgroup | grep -q docker',
+                        returnStatus: true
+                    ) == 0
+                    
+                    // Obter IP do node
+                    def nodeIP = ""
+                    if (isContainer) {
+                        nodeIP = sh(script: 'kubectl get nodes -o jsonpath=\'{.items[0].status.addresses[?(@.type=="InternalIP")].address}\'', returnStdout: true).trim()
+                    } else {
+                        nodeIP = sh(script: 'sudo -u deploy kubectl get nodes -o jsonpath=\'{.items[0].status.addresses[?(@.type=="InternalIP")].address}\'', returnStdout: true).trim()
+                    }
                     
                     if (nodeIP) {
                         echo "IP do node: ${nodeIP}"
