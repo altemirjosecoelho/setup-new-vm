@@ -72,6 +72,74 @@ pipeline {
             }
         }
         
+        stage('Verificar Usuário Deploy') {
+            steps {
+                script {
+                    echo "Verificando se o usuário 'deploy' existe..."
+                    
+                    // Verifica se o usuário deploy existe
+                    def deployUserExists = sh(
+                        script: 'id deploy',
+                        returnStatus: true
+                    ) == 0
+                    
+                    if (!deployUserExists) {
+                        echo "❌ Usuário 'deploy' não encontrado!"
+                        echo ""
+                        echo "=== COMANDO PARA CRIAR O USUÁRIO DEPLOY ==="
+                        echo "Execute o seguinte comando no terminal:"
+                        echo ""
+                        echo "adduser deploy && usermod -aG sudo deploy"
+                        echo ""
+                        echo "Este comando irá:"
+                        echo "1. Criar o usuário 'deploy'"
+                        echo "2. Adicionar o usuário ao grupo 'sudo' (privilegios de administrador)"
+                        echo ""
+                        echo "⚠️  ATENÇÃO: Execute este comando manualmente no terminal!"
+                        echo "================================================"
+                    } else {
+                        echo "✅ Usuário 'deploy' já existe!"
+                        
+                        // Verifica se o usuário está no grupo sudo
+                        def isInSudoGroup = sh(
+                            script: 'groups deploy | grep -q sudo',
+                            returnStatus: true
+                        ) == 0
+                        
+                        if (isInSudoGroup) {
+                            echo "✅ Usuário 'deploy' já possui privilégios de sudo!"
+                        } else {
+                            echo "⚠️  Usuário 'deploy' existe mas não está no grupo sudo!"
+                            echo "Execute: usermod -aG sudo deploy"
+                        }
+                        
+                        // Verifica se o grupo docker existe e adiciona o usuário deploy
+                        def dockerGroupExists = sh(
+                            script: 'getent group docker',
+                            returnStatus: true
+                        ) == 0
+                        
+                        if (dockerGroupExists) {
+                            def isInDockerGroup = sh(
+                                script: 'groups deploy | grep -q docker',
+                                returnStatus: true
+                            ) == 0
+                            
+                            if (!isInDockerGroup) {
+                                echo "🐳 Adicionando usuário 'deploy' ao grupo 'docker'..."
+                                sh 'usermod -aG docker deploy'
+                                echo "✅ Usuário 'deploy' adicionado ao grupo 'docker'!"
+                            } else {
+                                echo "✅ Usuário 'deploy' já está no grupo 'docker'!"
+                            }
+                        } else {
+                            echo "ℹ️  Grupo 'docker' não existe ainda (será criado na instalação do Docker)"
+                        }
+                    }
+                }
+            }
+        }
+        
         stage('Verificar e Instalar Docker') {
             steps {
                 script {
